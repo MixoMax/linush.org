@@ -1,0 +1,3563 @@
+Directory structure:
+└── local-scryfall/
+    ├── README.md
+    ├── download_images.py
+    ├── experiments.ipynb
+    ├── LICENSE
+    ├── prepare_data.py
+    ├── run_tests.py
+    ├── scryfall_bulk_importer.py
+    ├── scryfall_syntax_parser.py
+    ├── server.py
+    ├── update_db.py
+    └── static/
+        ├── card.html
+        ├── card_style.css
+        ├── draft.css
+        ├── draft.html
+        ├── draft.js
+        ├── index.html
+        ├── random-edh.html
+        ├── random.html
+        └── style.css
+
+================================================
+FILE: README.md
+================================================
+# local-scryfall
+
+A local Magic: The Gathering card search tool that uses Scryfall-like syntax for filtering cards.
+
+## Query Syntax Guide
+
+### Basic Filtering
+
+The simplest way to search is by card name:
+```
+Lightning Bolt
+```
+This searches for cards containing "Lightning Bolt" in their name.
+
+### Field-Specific Searches
+
+Use the format `field:value` or `field=value` to search specific card properties:
+
+#### Card Properties
+- **Name**: `name:Lightning` or just `Lightning`
+- **Type**: `type:Creature` or `t:Artifact`
+- **Mana Value/CMC**: `mv:3` or `cmc=3`
+- **Oracle Text**: `oracle:flying` or `o:"enters the battlefield"`
+- **Power/Toughness**: `power:2` or `pow>=3`, `toughness:4` or `tou<=2`
+- **Loyalty**: `loyalty:3` or `loy>=4`
+
+#### Colors and Identity
+- **Colors**: `color:R` or `c:WU` (exact colors)
+- **Color Identity**: `identity:BG` or `id:WUBRG`
+
+Color notation:
+- `W` = White, `U` = Blue, `B` = Black, `R` = Red, `G` = Green
+- `C` = Colorless (for colors field only)
+
+#### Set and Rarity
+- **Set**: `set:mh3` or `s:pmh3`
+- **Rarity**: `rarity:rare` or `r:mythic`
+
+#### Prices and Rankings
+- **Euro Price**: `eur:5.50` or `price_euro>=10`
+- **USD Price**: `usd:2.00` or `price_usd<=5`
+- **EDHREC Rank**: `edhrec:1000` or `rank<=500`
+
+#### Date and Formats
+- **Release Date**: `date:2024-06-14` or `released>=2020-01-01`
+- **Legal Formats**: `format:modern` or `f:commander`
+
+#### Keywords
+- **Keywords**: `keyword:flying` or `kw:trample`
+
+### Operators
+
+#### Comparison Operators
+- `=` or `:` - Equals/contains
+- `>` - Greater than
+- `<` - Less than
+- `>=` - Greater than or equal
+- `<=` - Less than or equal
+- `%=` - Contains (fuzzy search)
+
+Examples:
+```
+mv>5          # Mana value greater than 5
+pow<=2        # Power less than or equal to 2
+oracle%=draw  # Oracle text contains "draw"
+```
+
+#### Color Operators
+For colors and color identity, operators have special meanings:
+- `=` - Exactly these colors
+- `:` or `%=` - Contains these colors
+- `>` - Contains these colors plus more
+- `<` - Subset of these colors
+- `>=` - Contains these colors or exactly these colors
+- `<=` - Subset of these colors or exactly these colors
+
+Examples:
+```
+c:R           # Red cards (may have other colors)
+c=R           # Exactly red (mono-red)
+c>=WU         # White-blue or cards with both white and blue
+id<WUBRG      # Color identity is a subset of all colors
+```
+
+### Count Queries (n- prefix)
+
+Use `n-` before a field to count elements:
+```
+n-colors=2    # Cards with exactly 2 colors
+n-keywords>=3 # Cards with 3 or more keywords
+n-set=1       # Cards in exactly 1 set
+```
+
+### Logical Operators
+
+#### AND (implicit or explicit)
+```
+type:creature power>=3        # Implicit AND
+type:creature AND power>=3    # Explicit AND
+```
+
+#### OR
+```
+rarity:rare OR rarity:mythic
+c:R OR c:G
+```
+
+#### NOT (using -)
+```
+-type:creature              # Not creatures
+type:creature -color:R      # Creatures that are not red
+```
+
+#### Parentheses for Grouping
+```
+type:creature AND (power>=5 OR toughness>=5)
+(c:R OR c:G) AND mv<=3
+```
+
+### Complex Examples
+
+```
+# Cheap aggressive creatures
+type:creature mv<=2 pow>=2 (c:R OR c:W)
+
+# Expensive blue or black spells
+(c:U OR c:B) mv>=6 -type:creature
+
+# Modern-legal artifacts under $10
+type:artifact format:modern usd<=10
+
+# Multicolored commanders
+n-colors>=2 format:commander type:legendary
+
+# Recent expensive cards
+released>=2023-01-01 usd>=20
+
+# Low-CMC card draw spells
+mv<=3 oracle:"draw" -type:creature
+```
+
+### Field Reference
+
+| Field | Shortcuts | Description | Example Values |
+|-------|-----------|-------------|----------------|
+| `name` | - | Card name | "Lightning Bolt" |
+| `type_line` | `t`, `type` | Full type line | "Creature — Human Wizard" |
+| `cmc` | `mv`, `manavalue` | Mana value | 3.0 |
+| `oracle_text` | `o`, `oracle` | Rules text | "Flying, trample" |
+| `power` | `pow` | Creature power | 2.0 |
+| `toughness` | `tou` | Creature toughness | 2.0 |
+| `loyalty` | `loy` | Planeswalker loyalty | 4 |
+| `colors` | `c`, `color` | Card colors | ["U", "R"] |
+| `color_identity` | `id`, `identity`, `ci` | Commander color identity | ["W", "U"] |
+| `keywords` | `kw`, `keyword` | Ability keywords | ["flying", "lifelink"] |
+| `set` | `s`, `e`, `edition` | Set codes | ["mh3", "pmh3"] |
+| `rarity` | `r` | Card rarity | "rare", "mythic" |
+| `price_euro` | `eur` | Euro price | 4.63 |
+| `price_usd` | `usd` | USD price | 1.95 |
+| `legal_formats` | `f`, `format` | Legal formats | ["modern", "commander"] |
+| `released_at` | `date`, `released` | Release date | "2024-06-14" |
+| `edhrec_rank` | `edhrec`, `rank` | EDHREC popularity rank | 1000 |
+
+
+
+
+================================================
+FILE: download_images.py
+================================================
+import json
+import requests
+from tqdm import tqdm
+from PIL import Image
+import threading
+import queue
+import os
+import sys
+
+
+def download_images(bulk_file_name, force_download=False):
+
+    with open(bulk_file_name, "r", encoding="utf-8") as f:
+        scryfall_dump = json.load(f)
+
+    def card_name_to_file_name(card_name):
+        card_name = card_name.replace(" ", "-")
+
+        card_name = "".join([char for char in card_name if char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"])
+
+        while "--" in card_name:
+            card_name = card_name.replace("--", "-")
+        while card_name.startswith("-"):
+            card_name = card_name[1:]
+        while card_name.endswith("-"):
+            card_name = card_name[:-1]
+        return card_name.strip("-").lower()
+
+
+    def download_image(url, filename):
+        img = Image.open(requests.get(url, stream=True).raw)
+        img.save(filename, "WEBP", quality=80)
+        img.close()
+
+    def e2e_download_worker(q: queue.Queue, pbar: tqdm, force_download: bool):
+        while not q.empty():
+            try:
+                card = q.get_nowait()
+                if "image_uris" not in card:
+                    card["image_uris"] = {
+                        "normal": card["card_faces"][0]["image_uris"]["normal"] if "card_faces" in card and len(card["card_faces"]) > 0 else ""
+                    }
+                
+                if not card["image_uris"].get("normal"):
+                    # print(f"Skipping {card.get('name', 'Unknown Card')} due to missing image URI.")
+                    pbar.update(1)
+                    q.task_done()
+                    continue
+
+                url = card["image_uris"]["normal"]
+                name = card_name_to_file_name(card["name"] + "-" + card.get("type_line", card.get("card_faces", [{}])[0].get("type_line", "")))
+
+                filename = f"./images/{name}.webp"
+                
+                # Skip if file already exists
+                if os.path.exists(filename) and not force_download:
+                    pbar.update(1)
+                    q.task_done()
+                    continue
+                    
+                download_image(url, filename)
+                pbar.update(1)
+                q.task_done()
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"Error downloading {card.get('name', 'Unknown Card')}: {e}")
+                pbar.update(1)
+                q.task_done()
+
+    NUM_THREADS = 100
+    card_queue = queue.Queue()
+
+    if not os.path.exists("./images"):
+        os.makedirs("./images")
+
+    for card_data in scryfall_dump:
+        if card_data.get("lang", "en") != "en":
+            continue
+        if card_data.get("promo", False):
+            continue
+        card_queue.put(card_data)
+
+    progress_bar = tqdm(total=card_queue.qsize(), desc="Downloading Images")
+
+    threads = []
+    for _ in range(NUM_THREADS):
+        thread = threading.Thread(target=e2e_download_worker, args=(card_queue, progress_bar, force_download))
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+
+    progress_bar.close()
+    print("Image download process completed.")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python download_images.py <bulk_file_name> <optional: force_download>")
+        sys.exit(1)
+
+    bulk_file_name = sys.argv[1]
+    force_download = sys.argv[2].lower() == "true" if len(sys.argv) > 2 else False
+    download_images(bulk_file_name, force_download)
+
+
+================================================
+FILE: experiments.ipynb
+================================================
+# Jupyter notebook converted to Python script.
+
+from scryfall_bulk_importer import load_data
+
+ALL_CARDS = load_data("./cards.json")
+
+set_code = "acmm"
+
+set_cards = [card for card in ALL_CARDS if set_code in card.get("set", []) and len(card.get("legal_formats", [])) != 0]
+print(len(set_cards), "cards found in set", set_code)
+for card in set_cards:
+    print(card["name"], card["set"], card["rarity"], card["legal_formats"])
+# Output:
+#   2 cards found in set acmm
+
+#   Command Tower // Command Tower ['acmm', 'rex'] common ['standardbrawl']
+
+#   Arcane Signet // Arcane Signet ['acmm'] common ['standardbrawl']
+
+
+
+
+================================================
+FILE: LICENSE
+================================================
+MIT License
+
+Copyright (c) 2025 Linus Horn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+================================================
+FILE: prepare_data.py
+================================================
+import json
+from tqdm import tqdm
+
+def card_name_to_file_name(card_name):
+    card_name = card_name.replace(" ", "-")
+
+    card_name = "".join([char for char in card_name if char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"])
+
+    while "--" in card_name:
+        card_name = card_name.replace("--", "-")
+    while card_name.startswith("-"):
+        card_name = card_name[1:]
+    while card_name.endswith("-"):
+        card_name = card_name[:-1]
+    return card_name.strip("-").lower()
+
+def parse_number(value):
+    if value is None or value == "":
+        return 0
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+def prepare_card_data(bulk_file_name):
+
+    with open(bulk_file_name, "r", encoding="utf-8") as f:
+        cards = json.load(f)
+
+    data_out = []
+
+    for card in tqdm(cards):
+        data_out.append({
+            "name": card["name"],
+            "safe_name": card_name_to_file_name(card["name"]),
+            "file_name": card_name_to_file_name(card["name"] + "-" + card.get("type_line", card.get("card_faces", [{}])[0].get("type_line", ""))) + ".webp",
+            "released_at": card["released_at"],
+            "year": int(card["released_at"].split("-")[0]),
+            "mana_cost": card.get("mana_cost", card.get("card_faces", [{}])[0].get("mana_cost", "")),
+            "cmc": card.get("cmc", card.get("card_faces", [{}])[0].get("cmc", 0)),
+            "type_line": card.get("type_line", card.get("card_faces", [{}])[0].get("type_line", "")),
+            "oracle_text": card.get("oracle_text", card.get("card_faces", [{}])[0].get("oracle_text", "")),
+            "power": parse_number(card.get("power", card.get("card_faces", [{}])[0].get("power", ""))),
+            "toughness": parse_number(card.get("toughness", card.get("card_faces", [{}])[0].get("toughness", ""))),
+            "loyalty": parse_number(card.get("loyalty", card.get("card_faces", [{}])[0].get("loyalty", ""))),
+            "colors": card.get("colors", card.get("card_faces", [{}])[0].get("colors", [])),
+            "color_identity": card.get("color_identity", []),
+            "keywords": card.get("keywords", []),
+            "set": [card.get("set", "")],
+            "collector_number": card.get("collector_number", ""),
+            "rarity": card.get("rarity", ""),
+            "edhrec_rank": card.get("edhrec_rank", 0),
+            "price_euro": parse_number(card.get("prices", {}).get("eur", 0.0)),
+            "price_usd": parse_number(card.get("prices", {}).get("usd", 0.0)),
+            "legal_formats": [fmt_str for fmt_str, legal in card.get("legalities", {}).items() if legal == "legal"],
+        })
+
+    names_to_card = {}
+    for card in data_out:
+        safe_name = card["safe_name"]
+        if not safe_name in names_to_card:
+            names_to_card[safe_name] = card
+        else:
+            names_to_card[safe_name]["set"].extend(card["set"])
+            names_to_card[safe_name]["set"] = list(set(names_to_card[safe_name]["set"]))
+
+    data_out = list(names_to_card.values())
+
+    with open("./cards.json", "w", encoding="utf-8") as f:
+        json.dump(data_out, f, indent=4, ensure_ascii=False)
+
+
+
+
+================================================
+FILE: run_tests.py
+================================================
+from scryfall_syntax_parser import query_to_filter, Filter, LogicalFilter, Operator, LogicalOperator, apply_filters, print_filters
+from scryfall_bulk_importer import load_data
+import colorama
+import argparse
+import time
+
+card_data = load_data("cards.json")
+
+TEST_CASES = [
+    [
+        "t:creature OR t:planeswalker cmc=4",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="creature", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="planeswalker", operator=Operator.CONTAINS)]),
+                Filter(key="cmc", value=4, operator=Operator.EQUALS)])
+    ],
+    [
+        "t:artifact AND (cmc>3 OR cmc<2)",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="artifact", operator=Operator.CONTAINS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="cmc", value=3, operator=Operator.GREATER_THAN),
+                        Filter(key="cmc", value=2, operator=Operator.LESS_THAN)
+                    ])
+            ])
+    ],
+    [
+        "t:enchantment",
+        Filter(key="type_line", value="enchantment", operator=Operator.CONTAINS)
+    ],
+    [
+        "t:enchantment cmc>=5",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="enchantment", operator=Operator.CONTAINS),
+                Filter(key="cmc", value=5, operator=Operator.GREATER_THAN_OR_EQUAL)])
+    ],
+    [
+        "t:creature t:elf cmc<3",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="creature", operator=Operator.CONTAINS),
+                Filter(key="type_line", value="elf", operator=Operator.CONTAINS),
+                Filter(key="cmc", value=3, operator=Operator.LESS_THAN)
+            ])
+    ],
+    [
+        "t:instant OR t:sorcery",
+        LogicalFilter(
+            operator=LogicalOperator.OR,
+            filters=[
+                Filter(key="type_line", value="instant", operator=Operator.CONTAINS),
+                Filter(key="type_line", value="sorcery", operator=Operator.CONTAINS)
+            ])
+    ]
+]
+
+
+TEST_CASES = [
+    # Original Test Cases
+    [
+        "t:creature OR t:planeswalker cmc=4",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="creature", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="planeswalker", operator=Operator.CONTAINS)]),
+                Filter(key="cmc", value=4, operator=Operator.EQUALS)])
+    ],
+    [
+        "t:artifact (cmc>3 OR cmc<2)", # Note: Implicit AND is assumed before the parenthesis
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="artifact", operator=Operator.CONTAINS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="cmc", value=3, operator=Operator.GREATER_THAN),
+                        Filter(key="cmc", value=2, operator=Operator.LESS_THAN)
+                    ])
+            ])
+    ],
+    [
+        "t:enchantment",
+        Filter(key="type_line", value="enchantment", operator=Operator.CONTAINS)
+    ],
+    [
+        "t:enchantment cmc>=5",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="enchantment", operator=Operator.CONTAINS),
+                Filter(key="cmc", value=5, operator=Operator.GREATER_THAN_OR_EQUAL)])
+    ],
+    [
+        "t:creature t:elf cmc<3",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="creature", operator=Operator.CONTAINS),
+                Filter(key="type_line", value="elf", operator=Operator.CONTAINS),
+                Filter(key="cmc", value=3, operator=Operator.LESS_THAN)
+            ])
+    ],
+    [
+        "t:instant OR t:sorcery",
+        LogicalFilter(
+            operator=LogicalOperator.OR,
+            filters=[
+                Filter(key="type_line", value="instant", operator=Operator.CONTAINS),
+                Filter(key="type_line", value="sorcery", operator=Operator.CONTAINS)
+            ])
+    ],
+    [
+        "o:\"whenever you draw a card\"",
+        Filter(key="oracle_text", value="whenever you draw a card", operator=Operator.CONTAINS)
+    ],
+    [
+        "kw:flying",
+        Filter(key="keywords", value="flying", operator=Operator.CONTAINS)
+    ],
+    [
+        "r=rare",
+        Filter(key="rarity", value="rare", operator=Operator.EQUALS)
+    ],
+    [
+        "name=\"Birds of Paradise\"",
+        Filter(key="name", value="Birds of Paradise", operator=Operator.EQUALS)
+    ],
+    [
+        "Tarmogoyf", # Loose name word
+        Filter(key="name", value="Tarmogoyf", operator=Operator.CONTAINS)
+    ],
+    [
+        "cmc>5",
+        Filter(key="cmc", value=5.0, operator=Operator.GREATER_THAN)
+    ],
+    [
+        "pow<7",
+        Filter(key="power", value=7.0, operator=Operator.LESS_THAN)
+    ],
+    [
+        "tou>=10",
+        Filter(key="toughness", value=10.0, operator=Operator.GREATER_THAN_OR_EQUAL)
+    ],
+    [
+        "loy<=4",
+        Filter(key="loyalty", value=4.0, operator=Operator.LESS_THAN_OR_EQUAL)
+    ],
+    [
+        "year=1993",
+        Filter(key="year", value=1993, operator=Operator.EQUALS)
+    ],
+    [
+        "usd>99.99",
+        Filter(key="price_usd", value=99.99, operator=Operator.GREATER_THAN)
+    ],
+    [
+        "eur=0.50",
+        Filter(key="price_euro", value=0.50, operator=Operator.EQUALS)
+    ],
+    [
+        "s:m21",
+        Filter(key="set", value="m21", operator=Operator.CONTAINS)
+    ],
+    [
+        "e:war", # 'e' is an alias for 'set'
+        Filter(key="set", value="war", operator=Operator.CONTAINS)
+    ],
+    [
+        "f:modern",
+        Filter(key="legal_formats", value="modern", operator=Operator.CONTAINS)
+    ],
+    [
+        "c:wubrg", # Contains all 5 colors
+        Filter(key="colors", value="WUBRG", operator=Operator.CONTAINS)
+    ],
+    [
+        "c=wu", # Exactly white and blue
+        Filter(key="colors", value="WU", operator=Operator.EQUALS)
+    ],
+    [
+        "id<=wug", # Color identity is a subset of or equal to Bant (WUG)
+        Filter(key="color_identity", value="WUG", operator=Operator.LESS_THAN_OR_EQUAL)
+    ],
+    [
+        "id>=ubr", # Color identity is a superset of or equal to Grixis (UBR)
+        Filter(key="color_identity", value="UBR", operator=Operator.GREATER_THAN_OR_EQUAL)
+    ],
+    [
+        "c:c", # Colorless
+        Filter(key="colors", value="C", operator=Operator.CONTAINS)
+    ],
+    [
+        "id:c", # Colorless identity
+        Filter(key="color_identity", value="C", operator=Operator.CONTAINS)
+    ],
+    [
+        "-t:creature",
+        LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="type_line", value="creature", operator=Operator.CONTAINS)])
+    ],
+    [
+        "-c:w",
+        LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="colors", value="W", operator=Operator.CONTAINS)])
+    ],
+    [
+        "-kw:trample",
+        LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="keywords", value="trample", operator=Operator.CONTAINS)])
+    ],
+    [
+        "-(t:artifact OR t:enchantment)", # Negating a group
+        LogicalFilter(
+            operator=LogicalOperator.NOT,
+            filters=[
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="artifact", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="enchantment", operator=Operator.CONTAINS)
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        "t:legendary (t:goblin OR t:elf)",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="type_line", value="legendary", operator=Operator.CONTAINS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="goblin", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="elf", operator=Operator.CONTAINS)
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        "(c:w OR c:u) (t:instant OR t:sorcery) cmc<=2",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="colors", value="W", operator=Operator.CONTAINS),
+                        Filter(key="colors", value="U", operator=Operator.CONTAINS)
+                    ]
+                ),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="instant", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="sorcery", operator=Operator.CONTAINS)
+                    ]
+                ),
+                Filter(key="cmc", value=2.0, operator=Operator.LESS_THAN_OR_EQUAL)
+            ]
+        )
+    ],
+    [
+        "f:commander (-t:creature OR pow>5)",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="legal_formats", value="commander", operator=Operator.CONTAINS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        LogicalFilter(
+                            operator=LogicalOperator.NOT,
+                            filters=[Filter(key="type_line", value="creature", operator=Operator.CONTAINS)]
+                        ),
+                        Filter(key="power", value=5.0, operator=Operator.GREATER_THAN)
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        "c=r AND (t:goblin OR (t:warrior AND cmc<3))", # Explicit AND
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="colors", value="R", operator=Operator.EQUALS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="goblin", operator=Operator.CONTAINS),
+                        LogicalFilter(
+                            operator=LogicalOperator.AND,
+                            filters=[
+                                Filter(key="type_line", value="warrior", operator=Operator.CONTAINS),
+                                Filter(key="cmc", value=3.0, operator=Operator.LESS_THAN)
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        "(id:wub t:angel) OR (id:brg t:dragon)",
+        
+        LogicalFilter(
+            operator=LogicalOperator.OR,
+            filters=[
+                LogicalFilter(
+                    operator=LogicalOperator.AND,
+                    filters=[
+                        Filter(key="color_identity", value="WUB", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="angel", operator=Operator.CONTAINS)
+                    ]
+                ),
+                LogicalFilter(
+                    operator=LogicalOperator.AND,
+                    filters=[
+                        Filter(key="color_identity", value="BRG", operator=Operator.CONTAINS),
+                        Filter(key="type_line", value="dragon", operator=Operator.CONTAINS)
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        "c:w (t:knight OR (t:soldier (pow>2 OR tou>2)))", # Deep nesting
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="colors", value="W", operator=Operator.CONTAINS),
+                LogicalFilter(
+                    operator=LogicalOperator.OR,
+                    filters=[
+                        Filter(key="type_line", value="knight", operator=Operator.CONTAINS),
+                        LogicalFilter(
+                            operator=LogicalOperator.AND,
+                            filters=[
+                                Filter(key="type_line", value="soldier", operator=Operator.CONTAINS),
+                                LogicalFilter(
+                                    operator=LogicalOperator.OR,
+                                    filters=[
+                                        Filter(key="power", value=2.0, operator=Operator.GREATER_THAN),
+                                        Filter(key="toughness", value=2.0, operator=Operator.GREATER_THAN)
+                                    ]
+                                )
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
+    ],
+    [
+        # Test 38: legal commanders in izzet colors
+        "f:commander ci:RU AND -t:land AND -t:stickers AND -t:attraction",
+        LogicalFilter(
+            operator=LogicalOperator.AND,
+            filters=[
+                Filter(key="legal_formats", value="commander", operator=Operator.CONTAINS),
+                Filter(key="color_identity", value="RU", operator=Operator.CONTAINS),
+                LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="type_line", value="land", operator=Operator.CONTAINS)]),
+                LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="type_line", value="stickers", operator=Operator.CONTAINS)]),
+                LogicalFilter(operator=LogicalOperator.NOT, filters=[Filter(key="type_line", value="attraction", operator=Operator.CONTAINS)]),
+            ]
+        )
+    ]
+]
+
+
+def run_one_test(test_case: list):
+    query, expected_filter = test_case
+    got_filter = query_to_filter(query)
+
+    _cards_expected = apply_filters(card_data, expected_filter)
+    cards_expected = set([hash(str(card)) for card in _cards_expected])
+
+    _cards_got = apply_filters(card_data, got_filter)
+    cards_got = set([hash(str(card)) for card in _cards_got])
+
+    if len(cards_expected) == 0:
+        return (-1, query, expected_filter, got_filter, len(cards_expected), len(cards_got))
+
+    if cards_expected != cards_got:
+        return (0, query, expected_filter, got_filter, len(cards_expected), len(cards_got))
+    else:
+        return (1, query, expected_filter, got_filter, len(cards_expected), len(cards_got))
+
+
+def run_tests(print_all: bool = False):
+    t_start = time.time()
+
+    n_pass = 0
+    n_fail = 0
+    n_warn = 0
+    n_broken = 0
+    
+    for idx, test_case in enumerate(TEST_CASES):
+        try:
+            success, query, expected_filter, got_filter, n_expected, n_got = run_one_test(test_case)
+            if (success == -1 or success == 0) or print_all:
+                print(f"{idx + 1}/{len(TEST_CASES)} - ", end="")
+                match success:
+                    case 1: print(colorama.Fore.GREEN + f"PASS for query: {query} (returned {n_got} cards)" + colorama.Fore.RESET)
+                    case 0: 
+                        print(colorama.Fore.RED + "FAIL for query: " + query + colorama.Fore.RESET)
+                        print("Expected filter: ", end="")
+                        print_filters(expected_filter)
+                        print(f" (expected {n_expected} cards)")
+                        print()
+                        print("Got filter: ", end="")
+                        print_filters(got_filter)
+                        print(f" (got {n_got} cards)")
+                        print()
+                    case -1: 
+                        print(colorama.Fore.YELLOW + "WARNING for query: " + query + colorama.Fore.RESET)
+                        print("Expected filter: ", end="")
+                        print_filters(expected_filter)
+                        print(f" (expected {n_expected} cards)")
+                        print()
+                        print("Got filter: ", end="")
+                        print_filters(got_filter)
+                        print(f" (got {n_got} cards)")
+                        print("This test case is expected to return some cards, but it returned none.")
+                        print()
+
+        except Exception as e:
+            success = False
+            print(colorama.Fore.RED + f"Error running test {idx + 1}: {e}" + colorama.Fore.RESET)
+            print(f"Test case: {test_case}")
+            n_broken += 1
+            continue
+        match success:
+            case 1: n_pass += 1
+            case 0: n_fail += 1
+            case -1: n_warn += 1
+
+    t_end = time.time()
+    t_delta = t_end - t_start
+
+    print(f"Finished running tests in {t_delta:.2f} seconds.")
+    print(f"tests run: {len(TEST_CASES)}")
+    print(f"tests passed: {n_pass}")
+    print(f"tests failed: {n_fail}")
+    print(f"tests warned: {n_warn}")
+    print(f"tests broken: {n_broken}")
+    perc = (n_pass / len(TEST_CASES)) * 100 if len(TEST_CASES) > 0 else 0
+    print(f"Success rate: {perc:.2f}%")
+
+    if n_pass == len(TEST_CASES):
+        print(colorama.Fore.GREEN + "All tests passed!" + colorama.Fore.RESET)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run syntax parser tests.")
+    parser.add_argument("--all", action="store_true", help="Print all tests (including passing ones)")
+    args = parser.parse_args()
+
+    colorama.init()
+    run_tests(print_all=args.all)
+    colorama.deinit()
+
+
+
+================================================
+FILE: scryfall_bulk_importer.py
+================================================
+import json
+
+
+# https://scryfall.com/docs/api/bulk-data
+
+"""
+Each card approximately has the following fields:
+
+{
+    "name": str
+    "safe_name": str
+    "file_name": str
+    "released-at": str ("YYYY-MM-DD")
+    "year": int
+    "mana_cost": str | None (eg: "{2}{B}{R}", None)
+    "cmc": float
+    "type_line": str
+    "oracle_text": str
+    "power": float | str | None (eg: 3, 4, "X", None)
+    "toughness": float | str | None (same as power)
+    "loyalty": float | str | None (same as power)
+    "colors": list[str] (eg: ["B", "R"] for black and red colors)
+    "color_identity": list[str] (eg: ["B", "R"] for black and red color identity)
+    "keywords": list[str] (eg: ["deathtouch", "flying"])
+    "set": list[str] (list of set codes this cards has been printed in, eg: ["m21", "m22"])
+    "rarity": str (eg: "common", "uncommon", "rare", "mythic")
+    "edhrec_rank": int | None (eg: 1234, None)
+    "price_euro": float | None (eg: 1.23, None)
+    "price_usd": float | None (eg: 1.23, None)
+    "legal_formats": list[str] (list of formats where the card is legal, eg: ["standard", "modern", "legacy"])
+}
+"""
+
+def load_data(file_path: str) -> list[dict]:
+    with open(file_path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+    return data
+
+
+
+
+================================================
+FILE: scryfall_syntax_parser.py
+================================================
+import re
+import sys
+from enum import Enum
+from typing import Union
+
+def printd(debug_print: bool, *args, **kwargs):
+    if debug_print:
+        print(*args, **kwargs)
+    else:
+        #TODO: log instead of printing (eventually)
+        pass
+
+
+
+class Operator(Enum):
+    EQUALS = "=" # checks equality (both numbers and strings)
+
+    # Math operators
+    GREATER_THAN = ">"
+    LESS_THAN = "<"
+    GREATER_THAN_OR_EQUAL = ">="
+    LESS_THAN_OR_EQUAL = "<="
+
+    # String fuzzy operators
+    CONTAINS = "%="
+
+OPERATOR_SYMBOLS = {
+    ">=": Operator.GREATER_THAN_OR_EQUAL,
+    "<=": Operator.LESS_THAN_OR_EQUAL,
+    "%=": Operator.CONTAINS,
+    "=": Operator.EQUALS,
+    ">": Operator.GREATER_THAN,
+    "<": Operator.LESS_THAN,
+    ":": Operator.CONTAINS
+}
+
+
+
+
+class Filter:
+    def __init__(self, key: str, value, operator: Operator = Operator.EQUALS, debug_print: bool = False, is_n_key: bool = False):
+        self.debug_print = debug_print
+        self.key = key
+        self.value = value
+        self.operator = operator
+        self.is_n_key = is_n_key
+    
+    def check(self, item: dict) -> bool:
+        if self.key not in item:
+            return False
+        
+        item_value = item[self.key]
+
+        if self.is_n_key:
+            if isinstance(item_value, (str, list)):
+                item_value = len(item_value)
+            else:
+                item_value = 0
+        
+        if isinstance(item_value, str) and isinstance(self.value, str):
+            match self.operator:
+                case Operator.EQUALS:
+                    return item_value == self.value
+                case Operator.CONTAINS:
+                    return self.value.lower() in item_value.lower()
+                case _:
+                    raise ValueError(f"Unsupported operator for string comparison: {self.operator}")
+        
+        elif isinstance(item_value, list) and isinstance(self.value, str):
+            if self.key == "colors" or self.key == "color_identity":
+                search_value = self.value.upper()
+                is_searching_for_colorless = "C" in search_value
+                search_value = [char for char in search_value if char != "C"]
+                match self.operator:
+                    case Operator.EQUALS:
+                        return set(search_value) == set(item_value)
+                    case Operator.CONTAINS:
+                        match self.key:
+                            case "color_identity":
+                                printd(self.debug_print, f"Checking color identity: {item_value} against {search_value}")
+                                return all([v in search_value for v in item_value])
+                            case "colors":
+                                printd(self.debug_print, f"Checking colors: {item_value} against {search_value}")
+                                return all(v in item_value for v in search_value) or (is_searching_for_colorless and len(item_value) == 0)
+                    case Operator.GREATER_THAN:
+                        return all(v in item_value for v in search_value) and len(item_value) > len(search_value)
+                    case Operator.LESS_THAN:
+                        return all([v in search_value for v in item_value]) and len(item_value) < len(search_value)
+                    case Operator.GREATER_THAN_OR_EQUAL:
+                        printd(self.debug_print, f"Checking greater than or equal: {item_value} against {search_value}")
+                        return (all(v in item_value for v in search_value) and len(item_value) > len(search_value)) or set(search_value) == set(item_value)
+                    case Operator.LESS_THAN_OR_EQUAL:
+                        printd(self.debug_print, f"Checking less than or equal: {item_value} against {search_value}")
+                        return (all(v in search_value for v in item_value) and len(item_value) < len(search_value)) or set(search_value) == set(item_value)
+            else:
+                match self.operator:
+                    case Operator.EQUALS | Operator.CONTAINS:
+                        return any(self.value.lower() in str(v).lower() for v in item_value)
+                    case Operator.GREATER_THAN | Operator.LESS_THAN | Operator.GREATER_THAN_OR_EQUAL | Operator.LESS_THAN_OR_EQUAL:
+                        raise ValueError(f"Unsupported operator for list comparison: {self.operator}")
+            
+        elif isinstance(item_value, (int, float)) and isinstance(self.value, (int, float)):
+            match self.operator:
+                case Operator.EQUALS:
+                    return item_value == self.value
+                case Operator.GREATER_THAN:
+                    return item_value > self.value
+                case Operator.LESS_THAN:
+                    return item_value < self.value
+                case Operator.GREATER_THAN_OR_EQUAL:
+                    return item_value >= self.value
+                case Operator.LESS_THAN_OR_EQUAL:
+                    return item_value <= self.value
+                case _:
+                    raise ValueError(f"Unsupported operator for numeric comparison: {self.operator}")
+        else:
+            return False  # Type mismatch or unsupported comparison
+
+    def __str__(self):
+        n_prefix = "n-" if self.is_n_key else ""
+        return f"Filter(key={n_prefix}{self.key}, value={self.value}, operator={self.operator})"
+    def __repr__(self):
+        return self.__str__()
+
+
+class LogicalOperator(Enum):
+    AND = "AND"
+    NOT = "NOT"
+    OR = "OR"
+
+class LogicalFilter:
+    def __init__(self, operator: LogicalOperator, filters: list[Union[Filter, 'LogicalFilter']] | None = None, debug_print: bool = False):
+        self.operator = operator
+        self.filters = filters if filters is not None else []
+        self.debug_print = debug_print
+
+    def add_filter(self, filter: Union[Filter, 'LogicalFilter']):
+        self.filters.append(filter)
+    
+    def check(self, item: dict) -> bool:
+        if not self.filters:
+            printd(self.debug_print, "No filters to check, returning True")
+            return True
+        
+        if self.operator == LogicalOperator.AND:
+            for f in self.filters:
+                if not f.check(item):
+                    printd(self.debug_print, f"Filter {f} did not match item {item} for AND operation, returning False")
+                    return False
+            printd(self.debug_print, "All filters matched for AND operation, returning True")
+            return True
+
+
+        elif self.operator == LogicalOperator.OR:
+            for f in self.filters:
+                if f.check(item):
+                    printd(self.debug_print, f"Filter {f} matched item {item} for OR operation, returning True")
+                    return True
+            printd(self.debug_print, "No filters matched for OR operation, returning False")
+            return False
+
+
+        elif self.operator == LogicalOperator.NOT:
+            if len(self.filters) != 1:
+                raise ValueError("NOT operator requires exactly one filter")
+            return not self.filters[0].check(item)
+        else:
+            raise ValueError(f"Unsupported logical operator: {self.operator}")
+    
+    def __str__(self):
+        filters_str = ", ".join(str(f) for f in self.filters)
+        return f"LogicalFilter(operator={self.operator}, filters=[{filters_str}])"
+    def __repr__(self):
+        return self.__str__()
+
+
+def apply_filters(data: list[dict], filter: Union[Filter, LogicalFilter]) -> list[dict]:
+    return [item for item in data if filter.check(item)]
+
+
+KEY_SHORT_HANDS = { # key: short hands
+    "type_line": ("t", "type"),
+    "name": ("name",),
+    "cmc": ("mv", "manavalue"),
+    "keywords": ("kw", "keyword"),
+    "set": ("s", "e", "set", "edition"),
+    "rarity": ("r", "rarity"),
+    "price_euro": ("eur",),
+    "price_usd": ("usd",),
+    "legal_formats": ("f", "format"),
+    "power": ("pow", "power"),
+    "toughness": ("tou", "toughness"),
+    "loyalty": ("loy", "loyalty"),
+    "oracle_text": ("o", "oracle"),
+    "colors": ("c", "color"),
+    "color_identity": ("id", "identity", "ci"),
+    "released_at": ("date", "released"),
+    "edhrec_rank": ("edhrec", "rank", "edhrec_rank"),
+}
+
+def query_to_filter(query: str, debug_print: bool = False) -> Union[Filter, LogicalFilter]:
+    # Pre-process query to make parsing easier
+    query = query.replace("(", " ( ").replace(")", " ) ")
+    # Tokenize query, respecting quotes
+    tokens = [t for t in re.split(r'\s+(?=(?:[^\'"]*[\'"][^\'"]*[\'"])*[^\'"]*$)', query.strip()) if t]
+
+    def parse_expression(tokens):
+        # Lowest precedence: implicit AND
+        and_operands = []
+        while tokens:
+            and_operands.append(parse_term(tokens))
+            if tokens and tokens[0].upper() == 'AND':
+                tokens.pop(0)  # Consume 'AND'
+            elif tokens and tokens[0] not in [')', 'OR']:
+                # Implicit AND
+                pass
+            else:
+                break
+        
+        if len(and_operands) > 1:
+            return LogicalFilter(LogicalOperator.AND, and_operands, debug_print)
+        return and_operands[0]
+
+    def parse_term(tokens):
+        # Higher precedence: OR
+        or_operands = []
+        while tokens:
+            or_operands.append(parse_factor(tokens))
+            if tokens and tokens[0].upper() == 'OR':
+                tokens.pop(0)  # Consume 'OR'
+            else:
+                break
+        
+        if len(or_operands) > 1:
+            return LogicalFilter(LogicalOperator.OR, or_operands, debug_print)
+        return or_operands[0]
+
+    def parse_factor(tokens):
+        token = tokens.pop(0)
+        is_negated = False
+        if token == '-':
+            is_negated = True
+            token = tokens.pop(0)
+        elif token.startswith('-') and len(token) > 1:
+            is_negated = True
+            token = token[1:]
+
+        if token == '(':
+            expr = parse_expression(tokens)
+            if not tokens or tokens.pop(0) != ')':
+                raise ValueError("Mismatched parentheses")
+            if is_negated:
+                return LogicalFilter(LogicalOperator.NOT, [expr], debug_print)
+            return expr
+
+        # It's a simple filter
+        filter_expr = parse_simple_filter(token)
+        if is_negated:
+            return LogicalFilter(LogicalOperator.NOT, [filter_expr], debug_print)
+        return filter_expr
+
+    def parse_simple_filter(token):
+        for op_symbol, op in OPERATOR_SYMBOLS.items():
+            if op_symbol in token:
+                key, value = token.split(op_symbol, 1)
+
+                is_n_key = False
+                if key.startswith('n-') and len(key) > 2:
+                    is_n_key = True
+                    key = key[2:]
+
+                if value.startswith('"') and value.endswith('"'):
+                    value = value[1:-1]
+                elif value.startswith("'") and value.endswith("'"):
+                    value = value[1:-1]
+
+                if value.replace('.', '', 1).isdigit():
+                    num = float(value)
+                    if op == Operator.EQUALS and num.is_integer():
+                        value = int(num)
+                    else:
+                        value = num
+                
+                original_key = key
+                for k, shorthands in KEY_SHORT_HANDS.items():
+                    if key in shorthands:
+                        key = k
+                        break
+                
+                return Filter(key, value, op, debug_print, is_n_key=is_n_key)
+        
+        return Filter("name", token, Operator.CONTAINS, debug_print)
+
+    return parse_expression(tokens)
+    
+
+    
+
+
+
+                
+
+        
+        
+            
+
+def print_filters(filter_expr: Union[Filter, LogicalFilter]) -> None:
+    """
+    Prints the filter expression using symbols: AND '^', OR 'v', NOT '¬'
+    """
+    def _format(expr):
+        if isinstance(expr, Filter):
+            key = 't' if expr.key == 'type_line' else expr.key
+            return f"{key}{expr.operator.value}{expr.value}"
+        if isinstance(expr, LogicalFilter):
+            if expr.operator == LogicalOperator.NOT:
+                sub = _format(expr.filters[0])
+                if isinstance(expr.filters[0], LogicalFilter):
+                    sub = f"({sub})"
+                return f"¬{sub}"
+            sep = ' ^ ' if expr.operator == LogicalOperator.AND else ' v '
+            parts = []
+            for subf in expr.filters:
+                s = _format(subf)
+                if isinstance(subf, LogicalFilter) and subf.operator != expr.operator:
+                    s = f"({s})"
+                parts.append(s)
+            return sep.join(parts)
+        raise ValueError(f"Unknown expression type: {expr}")
+    print(_format(filter_expr))
+
+
+
+================================================
+FILE: server.py
+================================================
+from scryfall_syntax_parser import KEY_SHORT_HANDS, query_to_filter, apply_filters, print_filters, Filter, LogicalFilter, LogicalOperator, Operator
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+import uvicorn
+import os
+import sys
+import re
+import time
+from typing import Any, Dict, List, Union
+import random
+from scryfall_bulk_importer import load_data
+from functools import lru_cache
+from datetime import datetime
+import uuid
+from pydantic import BaseModel
+from tqdm import tqdm
+
+app = FastAPI()
+
+ALL_CARDS = load_data("./cards.json")
+player_name: str
+draft_sessions: Dict[str, Dict[str, Any]] = {}
+
+class NewDraftRequest(BaseModel):
+    set_code: str
+    num_packs: int = 3
+    booster_type: str = "draft"
+    player_name: str
+
+class PickCardRequest(BaseModel):
+    player_id: str
+    card_safe_name: str
+
+class JoinRequest(BaseModel):
+    player_name: str
+
+@app.get("/api/v1/search")
+async def search_cards(q: str, order: Union[str, None] = None, direction: Union[str, None] = None) -> Dict[str, Any]:
+    """Search cards using Scryfall-like syntax."""
+    start_time = time.perf_counter()
+    try:
+        # Tokenize query, respecting quotes, to safely separate sorting directives
+        tokens = [t for t in re.split(r'\s+(?=(?:[^\'"]*[\\"][^\'"]*[\\"])*[^\'"]*$)', q.strip()) if t]
+        
+        new_tokens = []
+        local_order = None
+        local_direction = None
+
+        for token in tokens:
+            token_lower = token.lower()
+            if token_lower.startswith("order:") or token_lower.startswith("sort:"):
+                local_order = token.split(':', 1)[1]
+            elif token_lower.startswith("direction:") or token_lower.startswith("dir:"):
+                local_direction = token.split(':', 1)[1]
+                if local_direction not in ["asc", "desc", "ascending", "descending"]:
+                    local_direction = None
+            else:
+                new_tokens.append(token)
+        
+        # Prioritize function arguments if they are not at their default values
+        if order is None:
+            order = local_order
+        
+        direction = local_direction if direction is None else direction
+
+        q = " ".join(new_tokens)
+
+        if len(new_tokens) > 0:
+            filters = query_to_filter(q, debug_print=False)
+            print_filters(filters)
+            filtered_cards = apply_filters(ALL_CARDS, filters)
+        else:
+            filtered_cards = ALL_CARDS
+        
+        if order:
+            sort_key_map = {
+                "date": "released_at", "year": "released_at",
+                "cmc": "cmc",
+                "power": "power", "pow": "power",
+                "toughness": "toughness", "tou": "toughness",
+                "loyalty": "loyalty", "loy": "loyalty",
+                "eur": "price_euro", "euro": "price_euro",
+                "usd": "price_usd",
+                "edhrec": "edhrec_rank", "rank": "edhrec_rank", "edhrec_rank": "edhrec_rank"
+            }
+
+            sort_value_types = {
+                "date": "date",
+                "cmc": "int",
+                "power": "float",
+                "toughness": "float",
+                "loyalty": "float",
+                "price_euro": "float",
+                "price_usd": "float",
+            }
+
+            # sort keys where the defauld direction is descending. All others have Ascending as their default
+            default_desc_sort_keys = [
+                "released_at", "price_euro", "price_usd", "edhrec_rank"
+            ]
+
+            
+            is_n_sort = False
+            if order.startswith("n-") and len(order) > 2:
+                is_n_sort = True
+                order_key_shorthand = order[2:]
+                # Resolve shorthand to the actual key
+                order = next((k for k, shorthands in KEY_SHORT_HANDS.items() if order_key_shorthand in shorthands), order_key_shorthand)
+
+            sort_key = sort_key_map.get(order, order)
+            
+            default_direction = "desc" if (sort_key in default_desc_sort_keys) or is_n_sort else "asc"
+            if direction is None:
+                direction = default_direction            
+
+            reverse_sort = direction.lower() in ["desc", "descending"]
+
+            def get_sort_value(card):
+                val = card.get(sort_key)
+
+                if is_n_sort:
+                    return len(val) if isinstance(val, (str, list)) else 0
+
+                if val is None:
+                    return 0
+                
+                if order in sort_value_types:
+                    if sort_value_types[order] == "date":
+                        return datetime.strptime(val, "%Y-%m-%d").timestamp()
+                    elif sort_value_types[order] == "int":
+                        try:
+                            return int(val)
+                        except ValueError:
+                            return 0
+                    elif sort_value_types[order] == "float":
+                        try:
+                            return float(val)
+                        except ValueError:
+                            return 0.0
+                return val
+
+            print(f"Sorting by {sort_key} in {'descending' if reverse_sort else 'ascending'} order")
+            filtered_cards.sort(key=get_sort_value, reverse=reverse_sort)
+
+        end_time = time.perf_counter()
+        took_ms = round((end_time - start_time) * 1000)
+
+        if not filtered_cards:
+            return {"error": "No cards found matching the query", "took_ms": took_ms}
+        return {"cards": filtered_cards, "took_ms": took_ms}
+    except Exception as e:
+        end_time = time.perf_counter()
+        took_ms = round((end_time - start_time) * 1000)
+        return {"error": "Failed to process query", "details": str(e), "took_ms": took_ms}
+
+@app.get("/api/v1/random")
+async def get_random_cards(q: str = "", count: int = 1) -> JSONResponse:
+    """Get random cards from the database. Supports a count parameter."""
+    if not ALL_CARDS:
+        return JSONResponse({"error": "No cards available"}, status_code=500)
+
+    filtered_cards_pool = ALL_CARDS
+    if q:
+        try:
+            filters = query_to_filter(q, debug_print=False)
+            print_filters(filters)
+            filtered_cards_pool = apply_filters(ALL_CARDS, filters)
+        except Exception as e:
+            print(f"Error processing query '{q}': {e}") # Log error server-side
+            return JSONResponse({"error": "Failed to process query", "details": str(e)}, status_code=400)
+
+    if not filtered_cards_pool:
+        return JSONResponse({"error": "No cards found matching the query"}, status_code=404)
+
+    if len(filtered_cards_pool) < count:
+        return JSONResponse({"error": "Not enough cards available"}, status_code=404)
+    
+    random_cards = random.sample(filtered_cards_pool, count)
+    if len(random_cards) == 1:
+        return JSONResponse({"card": random_cards[0]})
+    return JSONResponse({"cards": random_cards})
+
+@app.get("/api/v1/card/{safe_card_name}")
+async def get_card_by_name(safe_card_name: str) -> Dict[str, Any]:
+    """Get a card by its name."""
+    for card in ALL_CARDS:
+        if card["safe_name"] == safe_card_name:
+            return {"card": card}
+    return {"error": "Card not found"}
+
+def get_set_codes() -> tuple[str]:
+    set_set = set()
+    for card in ALL_CARDS:
+        set_set.update(card.get("set", []))
+    return tuple(sorted(set_set))
+
+def get_set_codes_draftable() -> List[str]:
+    fp = "draftable_sets.txt"
+    if os.path.exists(fp):
+        if os.path.getmtime(fp) > os.path.getmtime("./cards.json"):
+            # If the file is newer than the cards.json, return cached data
+            with open(fp, "r") as f:
+                return [line.strip() for line in f.readlines() if line.strip()]
+    
+
+    set_codes = get_set_codes()
+    ret_set_codes = []
+    for set_code in tqdm(set_codes):
+        for boster_type in ["draft", "set"]:
+            sim_pack = generate_pack(set_code, boster_type)
+            if len(sim_pack) < 15:
+                continue
+            ret_set_codes.append(set_code)
+
+    ret_set_codes = sorted(set(ret_set_codes))
+    with open(fp, "w") as f:
+        for code in ret_set_codes:
+            f.write(f"{code}\n")
+
+    return ret_set_codes
+
+@app.get("/api/v1/sets")
+async def get_sets(only_draftable: bool = False):
+    """Get a list of all sets."""
+    if only_draftable:
+        return JSONResponse({"sets": get_set_codes_draftable()})
+    else:
+        return JSONResponse({"sets": list(get_set_codes())})
+    
+def get_session_public_view(session_id: str):
+    session = draft_sessions.get(session_id)
+    if not session:
+        return None
+    return {
+        "id": session_id,
+        "set_code": session["set_code"],
+        "players": [{"id": p["id"], "is_host": p["is_host"], "name": p["name"]} for p in session["players"]],
+        "status": session["status"]
+    }
+
+@app.post("/api/v1/draft/new")
+async def new_draft(request: NewDraftRequest):
+    session_id = str(uuid.uuid4())
+    player_id = str(uuid.uuid4())
+    
+    draft_sessions[session_id] = {
+        "id": session_id,
+        "set_code": request.set_code,
+        "num_packs": request.num_packs,
+        "booster_type": request.booster_type,
+        "players": [{"id": player_id, "is_host": True, "picked_cards": [], "current_pack": [], "name": request.player_name}],
+        "status": "lobby", # lobby, picking, finished
+        "current_pack_number": 0,
+        "all_packs": []
+    }
+    return {"session_id": session_id, "player_id": player_id, "session": get_session_public_view(session_id)}
+
+@app.get("/api/v1/draft/sessions")
+async def get_sessions():
+    return {"sessions": [get_session_public_view(sid) for sid, s in draft_sessions.items() if s["status"] == "lobby"]}
+
+@app.post("/api/v1/draft/{session_id}/join")
+async def join_draft(session_id: str, request: JoinRequest):
+    print
+    session = draft_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if len(session["players"]) >= 8:
+        raise HTTPException(status_code=400, detail="Session is full")
+    if session["status"] != "lobby":
+        raise HTTPException(status_code=400, detail="Draft has already started")
+
+    player_id = str(uuid.uuid4())
+    session["players"].append({"id": player_id, "is_host": False, "picked_cards": [], "current_pack": [], "name": request.player_name})
+    return {"session_id": session_id, "player_id": player_id, "session": get_session_public_view(session_id), "name": request.player_name}
+
+def get_cards_by_rarity(set_cards: List[Dict[str, Any]]):
+    commons = [c for c in set_cards if c.get("rarity") == "common" and "Land" not in c.get("type_line", "")]
+    uncommons = [c for c in set_cards if c.get("rarity") == "uncommon"]
+    rares = [c for c in set_cards if c.get("rarity") == "rare"]
+    mythics = [c for c in set_cards if c.get("rarity") == "mythic"]
+    basic_lands = [c for c in set_cards if c.get("type_line", "").startswith("Basic Land")]
+    return commons, uncommons, rares, mythics, basic_lands
+
+def _add_cards_to_pack(pack: List[Dict[str, Any]], card_pool: List[Dict[str, Any]], count: int):
+    """Helper to add non-duplicate cards to a pack."""
+    if not card_pool or count == 0:
+        return
+    
+    pack_card_names = {c['name'] for c in pack}
+    available_cards = [c for c in card_pool if c['name'] not in pack_card_names]
+    
+    if len(available_cards) < count:
+        pool_to_sample = available_cards if available_cards else card_pool
+        if not pool_to_sample:
+            return
+        pack.extend(random.choices(pool_to_sample, k=count))
+    else:
+        pack.extend(random.sample(available_cards, k=count))
+
+def generate_set_booster(set_code: str) -> List[Dict[str, Any]]:
+    set_cards = [card for card in ALL_CARDS if set_code in card.get("set", []) and len(card.get("legal_formats", [])) != 0]
+    
+    commons, uncommons, rares, mythics, basic_lands = get_cards_by_rarity(set_cards)
+    
+    pack: List[Dict[str, Any]] = []
+
+    # Slot 1: 6 Commons or uncommons
+    c_u_outcomes = [(5, 1), (4, 2), (3, 3), (2, 4), (1, 5), (0, 6)]
+    c_u_weights = [35, 40, 12.5, 7, 3.5, 2]
+    num_c, num_u = random.choices(c_u_outcomes, weights=c_u_weights, k=1)[0]
+    _add_cards_to_pack(pack, commons, num_c)
+    _add_cards_to_pack(pack, uncommons, num_u)
+
+    # Slot 2: 1 Common or uncommon
+    commons_and_uncommons = commons + uncommons
+    _add_cards_to_pack(pack, commons_and_uncommons, 1)
+
+    # Slot 3: 2 Common or uncommon or rare or mythic rare
+    slot3_outcomes = [('C', 'C'), ('C', 'U'), ('C', 'R/M'), ('U', 'U'), ('U', 'R/M'), ('R/M', 'R/M')]
+    slot3_weights = [49, 24.5, 17.5, 3.1, 4.3, 1.6]
+    card1_type, card2_type = random.choices(slot3_outcomes, weights=slot3_weights, k=1)[0]
+    
+    rares_and_mythics = rares + mythics
+    type_map = {'C': commons, 'U': uncommons, 'R/M': rares_and_mythics}
+    
+    _add_cards_to_pack(pack, type_map[card1_type], 1)
+    _add_cards_to_pack(pack, type_map[card2_type], 1)
+
+    # Slot 4: 1 Rare or Mythic rare
+    if mythics and random.random() < 0.135:
+        _add_cards_to_pack(pack, mythics, 1)
+    else:
+        _add_cards_to_pack(pack, rares, 1)
+
+    # Slot 5: 1 Anything from common to Mythic rare
+    all_non_land = commons + uncommons + rares + mythics
+    _add_cards_to_pack(pack, all_non_land, 1)
+
+    # Slot 6: 1 Basic Land
+    if basic_lands:
+        _add_cards_to_pack(pack, basic_lands, 1)
+    else:
+        if commons:
+            _add_cards_to_pack(pack, commons, 1)
+
+    return pack
+
+def generate_draft_booster(set_code: str) -> List[Dict[str, Any]]:
+    set_cards = [card for card in ALL_CARDS if set_code in card.get("set", []) and len(card.get("legal_formats", [])) != 0]
+    
+    commons, uncommons, rares, mythics, basic_lands = get_cards_by_rarity(set_cards)
+    
+    pack: List[Dict[str, Any]] = []
+    _add_cards_to_pack(pack, commons, 10)
+    _add_cards_to_pack(pack, uncommons, 3)
+    
+    # 1 in 8 packs have a mythic instead of a rare
+    if mythics and random.randint(1, 8) == 1:
+        _add_cards_to_pack(pack, mythics, 1)
+    elif rares:
+        _add_cards_to_pack(pack, rares, 1)
+        
+    # Fill remaining slots if any rarity was short
+    while len(pack) < 14 and commons:
+        _add_cards_to_pack(pack, commons, 1)
+
+    # Basic lands
+    if basic_lands:
+        _add_cards_to_pack(pack, basic_lands, 1)
+    elif commons: # if no basic lands in set, add a common
+        _add_cards_to_pack(pack, commons, 1)
+
+    return pack
+
+def generate_pack(set_code: str, booster_type: str) -> List[Dict[str, Any]]:
+    if booster_type == "set":
+        pack = generate_set_booster(set_code)
+    else:
+        pack = generate_draft_booster(set_code)
+
+    unique_names = []
+    pack_unique = []
+    for card in pack:
+        safe_name = card.get("safe_name", "")
+        if safe_name not in unique_names:
+            unique_names.append(safe_name)
+            pack_unique.append(card)
+    return pack_unique
+
+@app.post("/api/v1/draft/{session_id}/start")
+async def start_draft(session_id: str):
+    session = draft_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session["status"] != "lobby":
+        raise HTTPException(status_code=400, detail="Draft already started or finished")
+
+    session["status"] = "picking"
+    session["current_pack_number"] = 1
+    
+    for player in session["players"]:
+        player["has_picked_this_round"] = False
+    
+    # Generate all packs for the draft
+    num_players = len(session["players"])
+    for _ in range(session["num_packs"]):
+        packs_for_round = [generate_pack(session["set_code"], session.get("booster_type", "draft")) for _ in range(num_players)]
+        session["all_packs"].append(packs_for_round)
+
+    # Distribute the first pack to each player
+    first_round_packs = session["all_packs"][0]
+    for i, player in enumerate(session["players"]):
+        player["current_pack"] = first_round_packs[i]
+
+    return {"message": "Draft started"}
+
+@app.post("/api/v1/draft/{session_id}/pick")
+async def pick_card(session_id: str, request: PickCardRequest):
+    session = draft_sessions.get(session_id)
+    if not session or session["status"] != "picking":
+        raise HTTPException(status_code=404, detail="Invalid session or not in picking phase")
+
+    player = next((p for p in session["players"] if p["id"] == request.player_id), None)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    pack = player["current_pack"]
+    card_to_pick = next((c for c in pack if c["safe_name"] == request.card_safe_name), None)
+    
+    if not card_to_pick:
+        raise HTTPException(status_code=400, detail="Card not in the current pack")
+
+    player["picked_cards"].append(card_to_pick)
+    player["current_pack"].remove(card_to_pick)
+    player["has_picked_this_round"] = True
+    
+    # Check if all players have picked
+    all_picked = all(p.get("has_picked_this_round", False) for p in session["players"])
+    
+    if all_picked:
+        # Rotate packs
+        num_players = len(session["players"])
+        if len(player["current_pack"]) > 0: # If there are cards left to pass
+            packs_to_pass = [p["current_pack"] for p in session["players"]]
+            for i in range(num_players):
+                # Pass clockwise for odd packs, counter-clockwise for even packs
+                if session["current_pack_number"] % 2 != 0:
+                    session["players"][i]["current_pack"] = packs_to_pass[(i - 1 + num_players) % num_players]
+                else:
+                    session["players"][i]["current_pack"] = packs_to_pass[(i + 1) % num_players]
+        else: # End of a pack
+            session["current_pack_number"] += 1
+            if session["current_pack_number"] > session["num_packs"]:
+                session["status"] = "finished"
+            else:
+                # Distribute next round of packs
+                next_round_packs = session["all_packs"][session["current_pack_number"] - 1]
+                for i, p in enumerate(session["players"]):
+                    p["current_pack"] = next_round_packs[i]
+
+        if session["status"] == "picking":
+            for p in session["players"]:
+                p["has_picked_this_round"] = False
+
+    return {"message": "Card picked successfully"}
+
+@app.get("/api/v1/draft/{session_id}/status")
+async def get_draft_status(session_id: str, player_id: str):
+    session = draft_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    player = next((p for p in session["players"] if p["id"] == player_id), None)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    response = {
+        "status": session["status"],
+        "players": [{"id": p["id"], "is_host": p["is_host"], "name": p["name"]} for p in session["players"]],
+    }
+
+    if session["status"] == "picking":
+        # A player is waiting if they have picked but the packs haven't rotated.
+        if player.get("has_picked_this_round", False):
+             response["status"] = "waiting"
+        else:
+            response["pack"] = player["current_pack"]
+    response["deck"] = player["picked_cards"]
+
+    return response
+
+
+
+
+@app.get("/card/{safe_card_name}")
+async def get_card_page(safe_card_name: str) -> HTMLResponse:
+    """Serve the card page for a specific card."""
+    with open("static/card.html", "r") as f:
+        html_content = f.read()
+    
+    html_content = html_content.replace("[CARD_NAME]", safe_card_name)
+
+    return HTMLResponse(content=html_content)
+
+@app.get("/random")
+async def get_random_card_page() -> FileResponse:
+    return FileResponse("static/random.html")
+
+@app.get("/draft")
+async def get_draft_page() -> FileResponse:
+    return FileResponse("static/draft.html")
+
+
+@app.get("/")
+@app.get("/{path:path}")
+async def get_static_file(path: str = "", q: str = ""):
+    if not path:
+        path = "index.html"
+    if path.endswith(".webp"):
+        file_path = os.path.join("images", path)
+    else:
+        file_path = os.path.join("static", path)
+    
+    if not os.path.exists(file_path):
+        return JSONResponse(status_code=404, content={"message": "File not found"})
+    
+    mime_type = "application/octet-stream"
+    if "." in path:
+        ext = path.split(".")[-1].lower()
+        match ext:
+            case "html": mime_type = "text/html"
+            case "css": mime_type = "text/css"
+            case "js": mime_type = "application/javascript"
+            case "json": mime_type = "application/json"
+            case "webp": mime_type = "image/webp"
+    
+    print(f"Serving file: {file_path} with MIME type: {mime_type}")
+
+    return FileResponse(file_path, media_type=mime_type)
+
+if __name__ == "__main__":
+    port = 8000
+    if len(sys.argv) > 1:
+        port = int(sys.argv[1])
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+
+================================================
+FILE: update_db.py
+================================================
+
+import requests
+from tqdm import tqdm
+from prepare_data import prepare_card_data
+from download_images import download_images
+
+# fetch Scryfall data API for the newest bulk data export
+url = "https://api.scryfall.com/bulk-data"
+response = requests.get(url)
+data = response.json()
+download_uri = data["data"][2]["download_uri"]
+print(download_uri)
+
+# download the data file
+file_path = "scryfall-data.json"
+
+# download with progress bar
+with open(file_path, "wb") as file:
+    response = requests.get(download_uri, stream=True)
+    for chunk in tqdm(response.iter_content(chunk_size=8192), desc="Downloading data", unit="KB"):
+        if chunk:
+            file.write(chunk)
+print(f"Data downloaded and saved to {file_path}")
+
+# construct cards.json and images/*.webp files
+prepare_card_data(file_path)
+download_images(file_path)
+
+
+
+================================================
+FILE: static/card.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/card_style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="logo-search-container">
+            <h1 class="site-title"><a href="/">MyScryfall</a></h1>
+        </div>
+    </header>
+    <main>
+        <div id="card-container" class="single-card-page-content">
+            <!-- Card details injected here -->
+        </div>
+    </main>
+
+    <script>
+        const cardName = "[CARD_NAME]"; // will be server side injected
+
+        function init() {
+            fetch("/api/v1/card/" + encodeURIComponent(cardName))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('card-container').innerHTML = `<h1>Error: ${data.error}</h1>`;
+                        return;
+                    }
+
+                    const card = data.card;
+                    document.title = card.name;
+
+                    const cardHtml = `
+                        <div class="card-item">
+                            <div class="card-image-container">
+                                <img src="/${card.file_name}" alt="${card.name}" title="${card.name}">
+                            </div>
+                            <div class="card-details">
+                                <h2>${card.name}</h2>
+                                <p><strong>Mana Cost:</strong> ${card.mana_cost || "N/A"}</p>
+                                <p><strong>CMC:</strong> ${card.cmc || "N/A"}</p>
+                                <p><strong>Type:</strong> ${card.type_line || "N/A"}</p>
+                                <p><strong>Text:</strong> ${card.oracle_text || "N/A"}</p>
+                                <p><strong>Power:</strong> ${card.power || "N/A"}</p>
+                                <p><strong>Toughness:</strong> ${card.toughness || "N/A"}</p>
+                                <p><strong>Loyalty:</strong> ${card.loyalty || "N/A"}</p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('card-container').innerHTML = cardHtml;
+                })
+                .catch(err => {
+                    console.error('Error fetching card:', err);
+                    document.getElementById('card-container').innerHTML = '<p class="error-message">An error occurred loading the card.</p>';
+                });
+        }
+
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
+
+
+
+================================================
+FILE: static/card_style.css
+================================================
+/* static/card_style.css */
+
+/* Main content area for the single card page */
+.single-card-page-content {
+    display: flex;
+    justify-content: center; /* Center the card-item container */
+    align-items: flex-start; /* Align to top if content is smaller than viewport */
+    padding: 20px;
+    margin-top: 20px; /* Space below the header */
+    box-sizing: border-box;
+}
+
+/* Styles for the .card-item container on the single card page */
+.single-card-page-content .card-item {
+    display: flex;
+    flex-direction: row; /* Image on left, details on right for wider screens */
+    background-color: #222222; /* Dark background for the card display area */
+    padding: 25px;
+    border-radius: 10px; /* Rounded corners for the container */
+    box-shadow: 0 5px 18px rgba(0, 0, 0, 0.4); /* A bit more pronounced shadow */
+    max-width: 900px; /* Max width for the entire card item */
+    width: 100%; /* Ensure it takes up available space up to max-width */
+    gap: 30px; /* Space between image container and details */
+    align-items: flex-start; /* Align items to the top */
+    box-sizing: border-box;
+}
+
+/* Container for the card image */
+.single-card-page-content .card-image-container {
+    flex-basis: 300px; /* Suggested base width for the image area */
+    flex-shrink: 0;    /* Prevent this container from shrinking */
+    min-width: 220px;  /* Minimum width for smaller views before stacking */
+}
+
+/* Card image styles within the single card page */
+.single-card-page-content .card-item img {
+    width: 100%; /* Make image fill its container */
+    height: auto;
+    border-radius: 9px; /* Scryfall cards have rounded corners */
+    display: block;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25); /* Consistent shadow from main page */
+    /* Override transitions/hovers from style.css if not desired for single view */
+    transition: none;
+}
+
+.single-card-page-content .card-item img:hover {
+    transform: none; /* Disable zoom effect from main page style */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25); /* Keep base shadow */
+}
+
+/* Card details section */
+.single-card-page-content .card-details {
+    flex-grow: 1; /* Allow details section to take remaining space */
+    color: #e8e8e8; /* Light text color */
+    line-height: 1.6;
+}
+
+.single-card-page-content .card-details h2 {
+    font-size: 1.8em; /* Larger font size for card name */
+    color: #ffffff;
+    margin-top: 0; /* Remove default top margin */
+    margin-bottom: 15px;
+    font-weight: 400; /* Slightly bolder than site-title */
+    border-bottom: 1px solid #383838; /* Separator line */
+    padding-bottom: 10px;
+}
+
+.single-card-page-content .card-details p {
+    margin-bottom: 10px;
+    font-size: 0.95em;
+}
+
+.single-card-page-content .card-details p strong {
+    color: #b0b0b0; /* Slightly muted color for labels */
+    margin-right: 8px;
+}
+
+/* Responsive adjustments for the single card page */
+@media (max-width: 768px) {
+    .single-card-page-content {
+        padding: 15px;
+        margin-top: 15px;
+    }
+
+    .single-card-page-content .card-item {
+        flex-direction: column; /* Stack image and details vertically */
+        align-items: center; /* Center items when stacked */
+        padding: 20px;
+        gap: 20px;
+    }
+
+    .single-card-page-content .card-image-container {
+        flex-basis: auto; /* Allow image container to size naturally */
+        width: 100%;     /* Full width for image container */
+        max-width: 300px; /* Max width for image on smaller screens */
+    }
+
+    .single-card-page-content .card-details {
+        width: 100%; /* Full width for details when stacked */
+    }
+
+    .single-card-page-content .card-details h2 {
+        font-size: 1.6em;
+        text-align: center; /* Center title on smaller screens */
+    }
+}
+
+@media (max-width: 480px) {
+    .single-card-page-content {
+        padding: 10px;
+        margin-top: 10px;
+    }
+
+    .single-card-page-content .card-item {
+        padding: 15px;
+    }
+
+    .single-card-page-content .card-details h2 {
+        font-size: 1.4em;
+    }
+
+    .single-card-page-content .card-details p {
+        font-size: 0.9em;
+    }
+}
+
+
+
+================================================
+FILE: static/draft.css
+================================================
+/* static/draft.css */
+
+#draft-container {
+    padding: 20px;
+}
+
+#lobby, #draft-room {
+    background-color: #222222;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+h2, h3 {
+    color: #ffffff;
+    border-bottom: 1px solid #383838;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+
+#create-draft, #session-browser {
+    margin-top: 20px;
+}
+
+#set-select, #num-packs-input, #create-draft-btn, #start-draft-btn {
+    padding: 10px;
+    font-size: 1em;
+    border-radius: 4px;
+    border: 1px solid #4a4a4a;
+    background-color: #2d2d2d;
+    color: #e8e8e8;
+    margin-right: 10px;
+}
+
+#create-draft-btn, #start-draft-btn {
+    cursor: pointer;
+    background-color: #3a6ea5;
+    border-color: #3a6ea5;
+}
+
+#create-draft-btn:hover, #start-draft-btn:hover {
+    background-color: #4b8bce;
+}
+
+#session-list {
+    list-style: none;
+    padding: 0;
+}
+
+#session-list li {
+    background-color: #2d2d2d;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#session-list button {
+    padding: 8px 12px;
+    cursor: pointer;
+    background-color: #28a745;
+    border: none;
+    color: white;
+    border-radius: 4px;
+}
+
+#session-list button:hover {
+    background-color: #218838;
+}
+
+#player-list {
+    margin-bottom: 20px;
+}
+
+#pack-display .card-item img {
+    cursor: pointer;
+}
+
+#pack-display .card-item.picked img {
+    opacity: 0.5;
+    border: 2px solid red;
+}
+
+#picked-cards {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid #383838;
+}
+
+#name {
+    padding: 20px;
+    padding-left: 10px;
+}
+
+#name > input {
+    border: none;
+    height: 25px;
+    border-radius: 15px;
+    line-height: 25px;
+    padding-left: 10px;
+    padding-right: 10px;
+    background-color: #383838;
+    color: white;
+}
+
+
+================================================
+FILE: static/draft.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Draft Simulator</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/draft.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="logo-search-container">
+            <h1 class="site-title"><a href="/">MyScryfall</a></h1>
+        </div>
+    </header>
+    <main>
+        <div id="draft-container">
+            <div id="name"><input id="name-input" placeholder="Name" maxlength="16"/></div>
+            <div id="lobby">
+                <h2>Draft Lobby</h2>
+                <div id="create-draft">
+                    <h3>Create New Draft</h3>
+                    <select id="set-select"></select>
+                    <select id="booster-type-select">
+                        <option value="draft">Draft Booster</option>
+                        <option value="set">Set Booster</option>
+                    </select>
+                    <input type="number" id="num-packs-input" value="3" min="1" max="10">
+                    <button id="create-draft-btn">Create Draft</button>
+                </div>
+                <div id="session-browser">
+                    <h3>Join a Draft</h3>
+                    <ul id="session-list"></ul>
+                </div>
+            </div>
+            <div id="draft-room" style="display: none;">
+                <h2 id="draft-room-title"></h2>
+                <div id="player-list"></div>
+                <button id="start-draft-btn" style="display: none;">Start Draft</button>
+                <div id="pack-display" class="card-grid"></div>
+                <h2>Picked Cards:</h2>
+                <div id="picked-cards" class="card-grid"></div>
+            </div>
+        </div>
+    </main>
+    <script src="/draft.js"></script>
+</body>
+</html>
+
+
+
+================================================
+FILE: static/draft.js
+================================================
+document.addEventListener('DOMContentLoaded', () => {
+    const setSelect = document.getElementById('set-select');
+    const createDraftBtn = document.getElementById('create-draft-btn');
+    const sessionList = document.getElementById('session-list');
+    const lobby = document.getElementById('lobby');
+    const draftRoom = document.getElementById('draft-room');
+    const draftRoomTitle = document.getElementById('draft-room-title');
+    const playerList = document.getElementById('player-list');
+    const startDraftBtn = document.getElementById('start-draft-btn');
+    const packDisplay = document.getElementById('pack-display');
+    const pickedCardsContainer = document.getElementById('picked-cards');
+    const nameInput = document.getElementById('name-input')
+
+    let currentSessionId = null;
+    let currentPlayerId = null;
+    let isHost = false;
+    let sessionStateInterval = null;
+
+    const SessionPollingInterval = 750;
+
+    // Fetch sets for the dropdown
+    fetch('/api/v1/sets?only_draftable=true')
+        .then(response => response.json())
+        .then(data => {
+            data.sets.forEach(set => {
+                const option = document.createElement('option');
+                option.value = set;
+                option.textContent = set.toUpperCase();
+                setSelect.appendChild(option);
+            });
+        });
+
+    // Create a new draft
+    createDraftBtn.addEventListener('click', () => {
+        const setCode = setSelect.value;
+        const numPacks = document.getElementById('num-packs-input').value;
+        const boosterType = document.getElementById('booster-type-select').value;
+        fetch('/api/v1/draft/new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ set_code: setCode, num_packs: parseInt(numPacks), booster_type: boosterType, player_name: getPlayerName() })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.session_id) {
+                currentSessionId = data.session_id;
+                currentPlayerId = data.player_id;
+                isHost = true;
+                showDraftRoom(data.session);
+            }
+        });
+    });
+
+    // Periodically refresh the list of sessions
+    setInterval(refreshSessions, SessionPollingInterval);
+    refreshSessions();
+
+    function refreshSessions() {
+        fetch('/api/v1/draft/sessions')
+            .then(response => response.json())
+            .then(data => {
+                sessionList.innerHTML = '';
+                data.sessions.forEach(session => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <span>${session.set_code.toUpperCase()} (${session.players.length}/8 players)</span>
+                        <button data-session-id="${session.id}">Join</button>
+                    `;
+                    li.querySelector('button').addEventListener('click', joinDraft);
+                    sessionList.appendChild(li);
+                });
+            });
+    }
+
+    function joinDraft(event) {
+        const sessionId = event.target.dataset.sessionId;
+        fetch(`/api/v1/draft/${sessionId}/join`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ player_name: getPlayerName() })
+         })
+            .then(response => response.json())
+            .then(data => {
+                if (data.session_id) {
+                    currentSessionId = data.session_id;
+                    currentPlayerId = data.player_id;
+                    isHost = false;
+                    showDraftRoom(data.session);
+                } else {
+                    alert(data.error);
+                }
+            });
+    }
+
+    function showDraftRoom(session) {
+        lobby.style.display = 'none';
+        draftRoom.style.display = 'block';
+        draftRoomTitle.textContent = `Drafting: ${session.set_code.toUpperCase()}`;
+        updatePlayerList(session.players);
+        if (isHost) {
+            startDraftBtn.style.display = 'block';
+        }
+        pollForSessionState();
+    }
+
+    function updatePlayerList(players) {
+        playerList.innerHTML = '<h3>Players:</h3>';
+        const ul = document.createElement('ul');
+        players.forEach(player => {
+            const li = document.createElement('li');
+            li.textContent = "" + player.name;
+            if (player.id === currentPlayerId) {
+                li.textContent += ' (You)';
+            }
+            if (player.is_host) {
+                li.textContent += ' (Host)';
+            }
+            ul.appendChild(li);
+        });
+        playerList.appendChild(ul);
+    }
+
+    startDraftBtn.addEventListener('click', () => {
+        // Just send the start request. The polling will handle UI updates.
+        fetch(`/api/v1/draft/${currentSessionId}/start`, { method: 'POST' });
+    });
+
+    function pollForSessionState() {
+        if (sessionStateInterval) {
+            clearInterval(sessionStateInterval);
+        }
+        sessionStateInterval = setInterval(() => {
+            if (!currentSessionId || !currentPlayerId) {
+                clearInterval(sessionStateInterval);
+                return;
+            }
+            fetch(`/api/v1/draft/${currentSessionId}/status?player_id=${currentPlayerId}`)
+                .then(response => response.json())
+                .then(state => {
+                    updatePlayerList(state.players);
+
+                    if (state.status === 'lobby') {
+                        // Still in lobby, just keep updating player list.
+                        // Host can see the start button.
+                        if (isHost) {
+                            startDraftBtn.style.display = 'block';
+                        }
+                    } else if (state.status === 'picking') {
+                        startDraftBtn.style.display = 'none';
+                        displayPack(state.pack);
+                        displayPickedCards(state.deck);
+                    } else if (state.status === 'waiting') {
+                        startDraftBtn.style.display = 'none';
+                        packDisplay.innerHTML = '<p>Waiting for other players to pick...</p>';
+                        displayPickedCards(state.deck);
+                    } else if (state.status === 'finished') {
+                        clearInterval(sessionStateInterval);
+                        startDraftBtn.style.display = 'none';
+                        displayDecklist(state.deck);
+                    }
+                })
+                .catch(error => {
+                    console.error("Error polling for draft state:", error);
+                    clearInterval(sessionStateInterval);
+                });
+        }, SessionPollingInterval);
+    }
+
+    function displayPack(pack) {
+        packDisplay.innerHTML = '';
+        pack.forEach(card => {
+            const cardItem = document.createElement('div');
+            cardItem.className = 'card-item';
+            const cardImg = document.createElement('img');
+            cardImg.src = `/${card.file_name}`;
+            cardImg.alt = card.name;
+            cardImg.title = card.name;
+            cardImg.dataset.cardSafeName = card.safe_name;
+            cardImg.addEventListener('click', pickCard);
+            cardItem.appendChild(cardImg);
+            packDisplay.appendChild(cardItem);
+        });
+    }
+
+    function pickCard(event) {
+        const cardSafeName = event.target.dataset.cardSafeName;
+        // Visually indicate the card has been picked
+        document.querySelectorAll('#pack-display .card-item img').forEach(img => {
+            img.parentElement.classList.add('picked');
+            img.removeEventListener('click', pickCard);
+        });
+        event.target.style.border = '3px solid lightgreen';
+
+        fetch(`/api/v1/draft/${currentSessionId}/pick`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ player_id: currentPlayerId, card_safe_name: cardSafeName })
+        });
+    }
+
+    function displayPickedCards(deck) {
+        pickedCardsContainer.innerHTML = "";
+        console.log("Displaying picked cards:", deck);
+        if (!deck) {
+            return;
+        }
+        deck.forEach(card => {
+            const cardItem = document.createElement('div');
+            cardItem.className = 'card-item';
+            const cardImg = document.createElement('img');
+            cardImg.src = `/${card.file_name}`;
+            cardImg.alt = card.name;
+            cardImg.title = card.name;
+            cardItem.appendChild(cardImg);
+            pickedCardsContainer.appendChild(cardItem);
+        });
+    }
+
+    function displayDecklist(deck) {
+        draftRoomTitle.textContent = 'Your Decklist';
+        packDisplay.style.display = 'none';
+        pickedCardsContainer.innerHTML = '';
+        deck.forEach(card => {
+            const p = document.createElement('p');
+            p.textContent = card.name;
+            pickedCardsContainer.appendChild(p);
+        });
+        const copyButton = document.createElement('button');
+        copyButton.textContent = 'Copy Decklist to Clipboard';
+        copyButton.addEventListener('click', () => {
+            const decklist = deck.map(card => "1 " + card.name).join('\n');
+            navigator.clipboard.writeText(decklist).then(() => {
+                alert('Decklist copied to clipboard!');
+            });
+        });
+        pickedCardsContainer.appendChild(copyButton);
+    }
+
+    function getPlayerName() {
+
+        const animals = ["Panda", "Koala", "Penguin", "Dolphin", "Tiger", "Lion", "Elephant", "Giraffe"];
+        const colors = ["Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Pink", "White"];
+        
+        if (nameInput.value.trim().length > 2) {
+            return nameInput.value.trim();
+        } else {
+            const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            return randomColor + randomAnimal;
+        }
+    }
+});
+
+
+
+================================================
+FILE: static/index.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Scryfall Clone</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="logo-search-container">
+            <h1 class="site-title">MyScryfall</h1>
+            <div class="search-bar-wrapper">
+                <form id="searchForm" class="search-form">
+                    <input type="text" id="search" name="q" placeholder="Search for cards... e.g., o:vigilance t:creature">
+                </form>
+            </div>
+            <a href="/random" class="random-link">
+                <span class="random-text">Random Card</span>
+            </a>
+            <a href="/random-edh.html" class="random-link">
+                <span class="random-text">Random EDH Deck</span>
+            </a>
+            <a href="/draft" class="random-link">
+                <span class="random-text">Draft Simulator</span>
+            </a>
+        </div>
+    </header>
+
+
+    <main>
+        <div id="query-stats" style="display: none;"></div>
+        <div class="stats-controls" style="display: none;">
+            <button id="toggleStatsBtn">Show Statistics</button>
+        </div>
+        <div id="statsContainer" class="stats-container" style="display: none;">
+            <div id="chartOptions" class="chart-options">
+                <!-- Checkboxes will be injected here -->
+            </div>
+            <div id="chartGrid" class="chart-grid">
+                <!-- Charts will be dynamically injected here -->
+            </div>
+        </div>
+
+        <div id="results" class="card-grid">
+            <!-- Cards will be injected here by JavaScript -->
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const searchForm = document.getElementById('searchForm');
+        const searchInput = document.getElementById('search');
+        const resultsDiv = document.getElementById('results');
+        const statsControls = document.querySelector('.stats-controls');
+        const toggleStatsBtn = document.getElementById('toggleStatsBtn');
+        const statsContainer = document.getElementById('statsContainer');
+        const chartOptionsDiv = document.getElementById('chartOptions');
+        const chartGridDiv = document.getElementById('chartGrid');
+        const queryStatsDiv = document.getElementById('query-stats');
+
+        // --- Infinite Scroll State ---
+        let allCards = [];
+        let renderedCardCount = 0;
+        let scrollObserver = null;
+        let imageObserver = null;
+        const CARDS_PER_BATCH = 100;
+
+        let charts = {}; // To hold chart instances
+        const allChartTypes = {
+            cmc: { label: 'CMC', type: 'bar' },
+            power: { label: 'Power', type: 'bar' },
+            toughness: { label: 'Toughness', type: 'bar' },
+            loyalty: { label: 'Loyalty', type: 'bar' },
+            colors: { label: 'Colors', type: 'pie' },
+            color_identity: { label: 'Color Identity', type: 'pie' }
+        };
+
+        // --- Chart.js Global Configuration ---
+        Chart.defaults.color = '#e0e0e0';
+        Chart.defaults.borderColor = '#4a4a4a';
+        Chart.defaults.plugins.legend.position = 'top';
+        Chart.defaults.plugins.tooltip.backgroundColor = '#2d2d2d';
+        Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
+        Chart.defaults.plugins.tooltip.bodyColor = '#e0e0e0';
+
+
+        // Function to get query parameter from URL
+        function getQueryParam(param) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(param);
+        }
+
+        function searchCards(event) {
+            if (event) {
+                event.preventDefault();
+            }
+
+            const query = searchInput.value.trim();
+            resultsDiv.innerHTML = '';
+            if (queryStatsDiv) {
+                queryStatsDiv.style.display = 'none';
+            }
+
+            // Reset infinite scroll state
+            if (scrollObserver) {
+                scrollObserver.disconnect();
+                scrollObserver = null;
+            }
+            if (imageObserver) {
+                imageObserver.disconnect();
+                imageObserver = null;
+            }
+            allCards = [];
+            renderedCardCount = 0;
+
+            if (!query) {
+                // Removed non-implemented UI feedback
+                return;
+            }
+
+            // Update URL with the search query
+            const newUrl = `${window.location.pathname}?q=${encodeURIComponent(query)}`;
+            history.pushState({ query }, '', newUrl);
+
+            // Removed non-implemented UI feedback
+
+
+            const url = `/api/v1/search?q=${encodeURIComponent(query)}`;
+
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // First, clear old stats and hide container
+                    clearStats();
+
+                    if (data.cards && data.cards.length > 0) {
+                        if (data.took_ms !== undefined) {
+                            queryStatsDiv.textContent = `${data.cards.length} Cards for query fetched in ${data.took_ms} ms`;
+                            queryStatsDiv.style.display = 'block';
+                        }
+
+                        // Show stats button and generate charts
+                        statsControls.style.display = 'block';
+                        // Only generate stats if the container is already visible
+                        if (statsContainer.style.display !== 'none') {
+                            generateStats(data.cards);
+                        }
+
+
+                        // Create and observe intersection observer for lazy loading
+                        const imageObserver = new IntersectionObserver((entries, observer) => {
+                            entries.forEach(entry => {
+                                if (entry.isIntersecting) {
+                                    const img = entry.target;
+                                    img.src = img.dataset.src;
+                                    observer.unobserve(img);
+                                }
+                });
+            });
+
+            data.cards.forEach((card, index) => {
+                const cardItem = document.createElement('div');
+                cardItem.className = 'card-item';
+
+                const cardImg = document.createElement('img');
+                cardImg.alt = card.name;
+                cardImg.title = card.name;
+                
+                // First 8 cards load immediately, rest are lazy loaded
+                if (index < 8) {
+                    cardImg.src = `/${card.file_name}`;
+                } else {
+                    cardImg.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; // Transparent placeholder
+                    cardImg.dataset.src = `/${card.file_name}`;
+                    imageObserver.observe(cardImg);
+                }
+
+                const cardLink = document.createElement('a');
+                cardLink.href = `/card/${encodeURIComponent(card.safe_name)}`;
+                cardLink.appendChild(cardImg);
+                cardItem.appendChild(cardLink);
+                resultsDiv.appendChild(cardItem);
+            });
+                    } else {
+                        resultsDiv.innerHTML = '<p class="no-results">No cards found.</p>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching cards:', error);
+                    resultsDiv.innerHTML = '<p class="error-message">Error fetching cards. Check console for details.</p>';
+                    clearStats();
+                });
+        }
+
+        function clearStats(fullClear = true) {
+            // Destroy all previous chart instances
+            Object.values(charts).forEach(chart => chart.destroy());
+            charts = {};
+            chartGridDiv.innerHTML = ''; // Clear the grid
+
+            if (fullClear) {
+                statsControls.style.display = 'none';
+                statsContainer.style.display = 'none';
+                toggleStatsBtn.textContent = 'Show Statistics';
+            }
+        }
+
+        function getChartPreferences() {
+            const savedPrefs = localStorage.getItem('chartPreferences');
+            if (savedPrefs) {
+                return JSON.parse(savedPrefs);
+            }
+            // Default preferences
+            return {
+                cmc: true,
+                power: false,
+                toughness: false,
+                loyalty: false,
+                colors: true,
+                color_identity: true
+            };
+        }
+
+        function saveChartPreferences(prefs) {
+            localStorage.setItem('chartPreferences', JSON.stringify(prefs));
+        }
+
+
+        function generateStats(cards) {
+            clearStats(false); // Clear previous charts without hiding the container
+            const preferences = getChartPreferences();
+
+            const cardData = {
+                cmc: cards.map(c => c.cmc),
+                power: cards.map(c => c.power).filter(p => p !== null),
+                toughness: cards.map(c => c.toughness).filter(t => t !== null),
+                loyalty: cards.map(c => c.loyalty).filter(l => l !== null),
+                colors: cards.flatMap(c => c.colors || ['C']),
+                color_identity: cards.flatMap(c => c.color_identity || ['C'])
+            };
+
+            for (const [key, config] of Object.entries(allChartTypes)) {
+                if (preferences[key] && cardData[key].length > 0) {
+                    const canvasId = `${key}Chart`;
+                    
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'chart-wrapper';
+                    if (config.type === 'pie') {
+                        wrapper.classList.add('pie-chart-wrapper');
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.id = canvasId;
+                    wrapper.appendChild(canvas);
+                    chartGridDiv.appendChild(wrapper);
+
+                    const chartTitle = `${config.label} Distribution`;
+                    const dataPayload = { label: config.label, data: cardData[key] };
+
+                    if (config.type === 'bar') {
+                        charts[canvasId] = createBarChart(canvasId, chartTitle, dataPayload);
+                    } else if (config.type === 'pie') {
+                        charts[canvasId] = createPieChart(canvasId, chartTitle, dataPayload);
+                    }
+                }
+            }
+        }
+
+        function createBarChart(canvasId, title, data) {
+            const counts = data.data.reduce((acc, val) => {
+                acc[val] = (acc[val] || 0) + 1;
+                return acc;
+            }, {});
+
+            const sortedKeys = Object.keys(counts).sort((a, b) => {
+                // Handle 'X' and other non-numeric values
+                const numA = isNaN(a) ? -1 : parseFloat(a);
+                const numB = isNaN(b) ? -1 : parseFloat(b);
+                return numA - numB;
+            });
+
+            const chartData = {
+                labels: sortedKeys,
+                datasets: [{
+                    label: data.label,
+                    data: sortedKeys.map(key => counts[key]),
+                    backgroundColor: 'rgba(138, 180, 248, 0.6)',
+                    borderColor: 'rgba(138, 180, 248, 1)',
+                    borderWidth: 1
+                }]
+            };
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'bar',
+                data: chartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: title },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#383838' } },
+                        x: { grid: { color: '#383838' } }
+                    }
+                }
+            });
+        }
+
+        function createPieChart(canvasId, title, data) {
+            const colorMap = { 'W': '#F8F6D8', 'U': '#C1D7E9', 'B': '#ABA29F', 'R': '#E8B3A4', 'G': '#BDE3C0', 'C': '#CCCCCC' };
+            const counts = data.data.reduce((acc, val) => {
+                acc[val] = (acc[val] || 0) + 1;
+                return acc;
+            }, {});
+
+            const chartData = {
+                labels: Object.keys(counts),
+                datasets: [{
+                    label: data.label,
+                    data: Object.values(counts),
+                    backgroundColor: Object.keys(counts).map(c => colorMap[c] || '#808080'),
+                    hoverOffset: 4
+                }]
+            };
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'pie',
+                data: chartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: title }
+                    }
+                }
+            });
+        }
+
+        toggleStatsBtn.addEventListener('click', () => {
+            const isHidden = statsContainer.style.display === 'none';
+            statsContainer.style.display = isHidden ? 'block' : 'none';
+            toggleStatsBtn.textContent = isHidden ? 'Hide Statistics' : 'Show Statistics';
+
+            // If we are showing the stats, and there are results, generate the charts
+            if (isHidden && resultsDiv.querySelector('.card-item')) {
+                // We need to re-fetch the data to generate stats, as we don't store it globally
+                // A better approach might store the last search result, but this is simpler for now.
+                const query = getQueryParam('q');
+                if (query) {
+                    fetch(`/api/v1/search?q=${encodeURIComponent(query)}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.cards && data.cards.length > 0) {
+                                generateStats(data.cards);
+                            }
+                        });
+                }
+            }
+        });
+
+        function setupChartOptions() {
+            const preferences = getChartPreferences();
+            chartOptionsDiv.innerHTML = '<span>Chart Options:</span>';
+
+            for (const [key, config] of Object.entries(allChartTypes)) {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `check-${key}`;
+                checkbox.checked = preferences[key] || false;
+
+                checkbox.addEventListener('change', () => {
+                    const currentPrefs = getChartPreferences();
+                    currentPrefs[key] = checkbox.checked;
+                    saveChartPreferences(currentPrefs);
+
+                    // If stats are visible, regenerate them
+                    if (statsContainer.style.display !== 'none' && resultsDiv.querySelector('.card-item')) {
+                         const query = getQueryParam('q');
+                        if (query) {
+                             fetch(`/api/v1/search?q=${encodeURIComponent(query)}`)
+                                .then(res => res.json())
+                                .then(data => {
+                                    if (data.cards && data.cards.length > 0) {
+                                        generateStats(data.cards);
+                                    }
+                                });
+                        }
+                    }
+                });
+
+                label.appendChild(checkbox);
+                label.append(` ${config.label}`);
+                chartOptionsDiv.appendChild(label);
+            }
+        }
+
+
+        searchForm.addEventListener('submit', searchCards);
+
+        // Check for query parameter on page load
+        window.addEventListener('load', () => {
+            setupChartOptions();
+            const query = getQueryParam('q');
+            if (query) {
+                searchInput.value = query;
+                searchCards();
+            }
+        });
+
+    </script>
+</body>
+</html>
+
+
+
+================================================
+FILE: static/random-edh.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Random EDH Deck Builder</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #e8e8e8; }
+        h1, h2 { text-align: center; color: #e8e8e8; }
+        .container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }
+        .card-image { width: 150px; height: auto; border: 1px solid #ccc; border-radius: 5px; cursor: pointer; transition: transform 0.2s ease-in-out; }
+        .card-image:hover { transform: scale(1.05); border-color: #007bff; }
+        .selected-commander { border: 3px solid gold; }
+        .card-image[selected="true"] { border: 3px solid #28a745; }
+        .card-image[selected="false"] { border: 3px solid black; }
+        #loading { display: none; }
+        #loading, #error { text-align: center; font-size: 1.2em; margin-top: 20px; }
+        #deck-list { list-style: none; padding: 0; }
+        #deck-list li { background-color: #fff; border: 1px solid #ddd; margin-bottom: 5px; padding: 8px; border-radius: 4px; }
+    </style>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <h1>Random EDH Deck Builder</h1>
+
+    <div id="loading">Loading...</div>
+    <div id="error" style="color: red;"></div>
+
+    <h2>Step 1: Choose your Commander</h2>
+    <div id="commander-selection" class="container">
+        <!-- Commander images will be loaded here -->
+    </div>
+
+    <p id="N_selected_cards">Selected Cards: <span id="selected-count">0</span></p>
+
+    <h2>Step 2: Your Deck (100 Choose 30)</h2>
+    <div id="deck-display" class="container">
+        <!-- Deck card images will be loaded here -->
+    </div>
+
+    <button onclick="copyDecklist()">Copy Decklist</button>
+
+    <script>
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const commanderSelectionDiv = document.getElementById('commander-selection');
+        const deckDisplayDiv = document.getElementById('deck-display');
+
+        let selectedCommander = null;
+        
+        let n_selected_cards = 0;
+
+        function updateSelectedCount() {
+            const selectedCards = deckDisplayDiv.querySelectorAll('.card-image[selected="true"]');
+            n_selected_cards = selectedCards.length;
+            document.getElementById('selected-count').textContent = n_selected_cards;
+        }
+
+        async function fetchJson(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `HTTP error! status: ${response.status}` }));
+                    throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                }
+                return await response.json();
+            } catch (e) {
+                console.error("Fetch error:", e);
+                errorDiv.textContent = `Failed to fetch data: ${e.message}`;
+                throw e;
+            }
+        }
+
+        function displayCards(cards, container, isCommanderSelection) {
+            container.innerHTML = ''; // Clear previous cards
+            if (!cards || cards.length === 0) {
+                container.textContent = 'No cards found.';
+                return;
+            }
+            cards.forEach(card => {
+                const img = document.createElement('img');
+                img.src = "/" + card.file_name
+                img.alt = card.name;
+                img.title = card.name;
+                img.classList.add('card-image');
+                if (isCommanderSelection) {
+                    img.addEventListener('click', () => handleCommanderSelection(card, img));
+                } else {
+                    img.setAttribute('selected', 'false');
+                    img.addEventListener('click', () => {
+                        updateSelectedCount();
+                        if (n_selected_cards >= 30 && img.getAttribute('selected') === 'false') {
+                            return;
+                        }
+                        img.setAttribute('selected', img.getAttribute('selected') === 'true' ? 'false' : 'true');
+                        updateSelectedCount();
+                    });
+                }
+                container.appendChild(img);
+            });
+        }
+
+        async function handleCommanderSelection(commander, imgElement) {
+            if (selectedCommander) {
+                // If a commander is already selected, we can either allow re-selection or prevent it.
+                // Uncomment the next line to allow re-selection:
+                // return; 
+                
+                // If you want to prevent re-selection, just return here:
+                return;
+            }
+            selectedCommander = commander;
+            console.log("Commander selected:", selectedCommander);
+            errorDiv.textContent = ''; // Clear previous errors
+
+            // Highlight selected commander
+            document.querySelectorAll('#commander-selection .card-image').forEach(el => el.classList.remove('selected-commander'));
+            imgElement.classList.add('selected-commander');
+            
+            deckDisplayDiv.innerHTML = ''; // Clear previous deck
+            loadingDiv.textContent = 'Fetching deck cards...';
+            loadingDiv.style.display = 'block';
+
+            const colorIdentity = commander.color_identity;
+            let deckQuery = '';
+
+            if (!colorIdentity || colorIdentity.length === 0) {
+                // For a colorless commander, "any subset of that color identity" means only colorless cards.
+                // The query for colorless cards is typically 'ci:C' or 'is:colorless'.
+                deckQuery = 'ci:C';
+            } else {
+                deckQuery = "ci:" + colorIdentity.join("");
+            }
+            
+            try {
+                const data = await fetchJson(`/api/v1/random?q=${encodeURIComponent("f:commander " + deckQuery + " AND -t=Land AND -t=Stickers AND -t:Attraction")}&count=100`);
+                displayCards(data.cards, deckDisplayDiv, false);
+            } catch (e) {
+                // Error already handled by fetchJson
+            }
+            loadingDiv.style.display = 'none';
+        }
+
+        async function initializePage() {
+            loadingDiv.textContent = 'Fetching commanders...';
+            loadingDiv.style.display = 'block';
+            errorDiv.textContent = '';
+            commanderSelectionDiv.innerHTML = '';
+            deckDisplayDiv.innerHTML = '';
+
+            try {
+                const data = await fetchJson('/api/v1/random?q=' + encodeURIComponent('f:commander t:creature t:legendary') + '&count=5');
+                if (data.cards && data.cards.length > 0) {
+                    displayCards(data.cards, commanderSelectionDiv, true);
+                } else if (data.card) { // Single card returned
+                    displayCards([data.card], commanderSelectionDiv, true);
+                }
+                else {
+                    errorDiv.textContent = 'No commanders found.';
+                }
+            } catch (e) {
+                // Error already handled by fetchJson
+            }
+            loadingDiv.style.display = 'none';
+        }
+
+        function copyDecklist() {
+            if (!selectedCommander) {
+                alert("Please select a commander first.");
+                return;
+            }
+
+            let deckList = Array.from(deckDisplayDiv.querySelectorAll('.card-image[selected="true"]'))
+                .map(img => "1 " + img.alt)
+                .join('\n');
+
+            navigator.clipboard.writeText(deckList)
+                .then(() => {
+                    alert("Decklist copied to clipboard!");
+                })
+                .catch(err => {
+                    console.error('Failed to copy decklist:', err);
+                    alert("Failed to copy decklist. Please try again.");
+                });
+        }
+        // Initialize the page on load
+        initializePage();
+    </script>
+</body>
+</html>
+
+
+
+================================================
+FILE: static/random.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+        input[type="number"] {
+            width: 200px;
+            padding: 10px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        #result {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 2fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        #result img {
+            width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+    </style>
+
+</head>
+<body>
+    <input type="number" id="numberInput" placeholder="How many random cards?">
+    <button id="generateButton" onclick="generateRandomCards()">Generate Random Cards</button>
+    <div id="result"></div>
+
+    <script>
+        function generateRandomCards() {
+            const numberInput = document.getElementById('numberInput');
+            const resultDiv = document.getElementById('result');
+            const numberOfCards = parseInt(numberInput.value, 10);
+
+            if (isNaN(numberOfCards) || numberOfCards <= 0) {
+                resultDiv.innerHTML = 'Please enter a valid number greater than 0.';
+                return;
+            }
+
+            for (let i = 0; i < numberOfCards; i++) {
+                fetch("/api/v1/random")
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log(data);
+                        const card = document.createElement("img");
+                        card.src = "/" + data.card.file_name;
+                        resultDiv.appendChild(card);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching random card:', error);
+                        resultDiv.innerHTML = 'Error fetching random cards. Please try again later.';
+                    });
+            }
+        }
+
+    </script>
+</body>
+</html>
+
+
+================================================
+FILE: static/style.css
+================================================
+/* Basic Reset & Body */
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #151515; /* Scryfall's dark background */
+    color: #e8e8e8; /* Light text color */
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+a {
+    color: #8ab4f8; /* A common link color on dark themes, similar to Scryfall */
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Header */
+.site-header {
+    background-color: #222222; /* Dark gray for header */
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #383838;
+    min-height: 40px; /* Ensure header has some min height */
+}
+
+.logo-search-container {
+    display: flex;
+    align-items: center;
+    gap: 25px; /* Increased gap */
+    flex-grow: 1;
+}
+
+.site-title {
+    color: #ffffff;
+    font-size: 1.75em;
+    margin: 0;
+    font-weight: 300; /* Lighter font weight, similar to Scryfall */
+    white-space: nowrap; /* Prevent title from wrapping */
+}
+
+.search-bar-wrapper {
+    flex-grow: 1;
+    max-width: 800px; /* Max width for search bar */
+}
+
+.search-form {
+    display: flex;
+}
+
+#search {
+    flex-grow: 1;
+    padding: 10px 15px; /* Adjusted padding */
+    border-radius: 4px;
+    border: 1px solid #4a4a4a;
+    background-color: #2d2d2d; /* Slightly lighter input background */
+    color: #e8e8e8;
+    font-size: 1em;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#search:focus {
+    border-color: #76a2d6;
+    box-shadow: 0 0 0 3px rgba(118, 162, 214, 0.25);
+}
+
+.header-nav {
+    display: flex;
+    gap: 18px; /* Gap between nav items */
+}
+
+.header-nav a {
+    color: #b0b0b0;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.header-nav a:hover {
+    color: #ffffff;
+    text-decoration: none;
+}
+
+/* Controls Toolbar */
+.controls-toolbar {
+    background-color: #1e1e1e;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #383838;
+    font-size: 0.875em; /* 14px if base is 16px */
+    color: #c0c0c0;
+    min-height: 28px; /* Ensure some min height */
+}
+
+.results-summary {
+    flex-shrink: 0; /* Prevent shrinking too much */
+    margin-right: auto; /* Push other elements to the right */
+}
+
+.display-options {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* Gap between sort/view options */
+    margin: 0 20px; /* Spacing around options */
+}
+
+.display-options span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.display-options select {
+    background-color: #2f2f2f;
+    color: #e0e0e0;
+    border: 1px solid #4a4a4a;
+    padding: 5px 8px;
+    border-radius: 3px;
+    font-size: 0.95em;
+    -webkit-appearance: none; /* Basic styling for select */
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23c0c0c0%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.4-5.4-13z%22%2F%3E%3C%2Fsvg%3E');
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: .65em auto;
+    padding-right: 25px; /* Space for arrow */
+}
+
+
+
+/* Main Content & Card Grid */
+main {
+    padding: 20px;
+}
+
+.card-grid {
+    display: grid;
+    /* Scryfall card images are approx 244x340.
+       minmax allows responsive card sizes. */
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 18px; /* Gap between cards */
+    justify-content: center;
+}
+
+.card-item {
+    /* Container for the image, allows for easier future styling if needed */
+}
+
+.card-item img {
+    width: 100%;
+    height: auto;
+    border-radius: 9px; /* Scryfall cards have rounded corners */
+    display: block; /* Removes extra space below image */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+    transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
+}
+
+.card-item img:hover {
+    transform: scale(1.025); /* Subtle zoom on hover */
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.35);
+}
+
+/* Utility classes for messages */
+.no-results, .error-message {
+    text-align: center;
+    padding: 30px;
+    font-size: 1.1em;
+    color: #909090;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) { /* Adjust breakpoint for when controls start to feel cramped */
+    .display-options {
+        margin: 0 10px;
+        gap: 8px;
+    }
+    .card-grid {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+    }
+}
+
+
+@media (max-width: 768px) {
+    .site-header {
+        flex-direction: column;
+        align-items: flex-start; /* Align items to the start in column layout */
+        gap: 10px; /* Gap between logo/search and nav when stacked */
+    }
+
+    .logo-search-container {
+        width: 100%; /* Full width for logo and search */
+        gap: 15px;
+    }
+    
+    .search-bar-wrapper {
+        max-width: none; /* Allow search bar to fill */
+    }
+
+    .header-nav {
+        align-self: flex-start; /* Align nav to the start */
+        gap: 12px;
+        flex-wrap: wrap; /* Allow nav items to wrap */
+    }
+    .header-nav a {
+        font-size: 0.85em;
+    }
+
+    .controls-toolbar {
+        flex-direction: column; /* Stack controls vertically */
+        gap: 10px;
+        align-items: stretch; /* Make items take full width */
+        padding: 10px 15px;
+    }
+
+    .results-summary {
+        text-align: center;
+        margin-right: 0; /* Reset margin */
+    }
+    .display-options {
+        justify-content: center; /* Center items */
+        flex-wrap: wrap;
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); /* Smaller cards on mobile */
+        gap: 12px;
+    }
+    main {
+        padding: 15px;
+    }
+}
+
+@media (max-width: 480px) {
+    .site-title {
+        font-size: 1.5em;
+    }
+    #search {
+        padding: 8px 12px;
+        font-size: 0.9em;
+    }
+    .controls-toolbar {
+        font-size: 0.8em;
+    }
+    .display-options select {
+        font-size: 0.9em; /* Make controls text smaller */
+    }
+    .card-grid {
+        /* Show 2 cards per row on very small screens, or adjust minmax for 1-2 */
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+    }
+     main {
+        padding: 10px;
+    }
+}
+
+/* Stats Section */
+.stats-controls {
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+#toggleStatsBtn {
+    background-color: #2f2f2f;
+    color: #e0e0e0;
+    border: 1px solid #4a4a4a;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+}
+
+#toggleStatsBtn:hover {
+    background-color: #3a3a3a;
+}
+
+.stats-container {
+    background-color: #1e1e1e;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #383838;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.chart-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: center;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #383838;
+    font-size: 0.9em;
+}
+
+.chart-options span {
+    font-weight: 500;
+    color: #c0c0c0;
+}
+
+.chart-options label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.chart-options input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.chart-wrapper {
+    min-width: 250px;
+    background-color: #222;
+    padding: 15px;
+    border-radius: 6px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    min-height: 350px; /* Use min-height instead of fixed height */
+}
+
+.pie-chart-wrapper {
+    /* max-height is no longer needed with the grid layout */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+

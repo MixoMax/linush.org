@@ -1,0 +1,257 @@
+Directory structure:
+└── ping.linush.org/
+    ├── server.py
+    └── static/
+        └── index.html
+
+================================================
+FILE: server.py
+================================================
+from fastapi import FastAPI
+from fastapi.websockets import WebSocket
+from fastapi.responses import JSONResponse, FileResponse
+import uvicorn
+import sys
+import time
+
+app = FastAPI()
+
+
+@app.get("/")
+@app.get("/index.html")
+async def serve_index():
+    return FileResponse("./static/index.html")
+
+
+@app.get("/ping")
+async def answer_ping():
+    return JSONResponse(content={"time": time.time()})
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_text()
+        await websocket.send_text(f"time: {time.time()}")
+
+
+if __name__ == "__main__":
+    port = 8000 if len(sys.argv) < 2 else int(sys.argv[1])
+
+    print("Starting server on port:", port, "!")
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+================================================
+FILE: static/index.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping Meter</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+        }
+        .chart-container {
+            width: 80%;
+            margin: 20px auto;
+        }
+        .metrics-container {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+        .metric {
+            text-align: center;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        .metric span:first-child {
+            margin-right: 5px;
+            font-weight: bold;
+        }
+
+        div.text-container {
+            padding-left: 3rem;
+        }
+
+        footer {
+            margin-top: 2rem;
+            padding: 1rem 0;
+            text-align: center;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="text-container">
+        <h1>ping.linush.org</h1>
+        <h3>Comparing HTTP and WebSocket Latency over weak networks</h3>
+    </div>
+    <div class="chart-container">
+        <canvas id="pingChart"></canvas>
+        <div class="metrics-container">
+            <div class="metric">
+                <span>Avg HTTP Ping:</span>
+                <span id="avgHttpPing">-- ms</span>
+            </div>
+            <div class="metric">
+                <span>HTTP Jitter:</span>
+                <span id="httpJitter">-- ms</span>
+            </div>
+            <div class="metric">
+                <span>Avg WS Ping:</span>
+                <span id="avgWsPing">-- ms</span>
+            </div>
+            <div class="metric">
+                <span>WS Jitter:</span>
+                <span id="wsJitter">-- ms</span>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Created with ❤️ by Linus Horn</p>
+        <p>&copy; 2025 Linus Horn <a href="https://github.com/MixoMax" target="_blank" style="color: var(--primary-color); text-decoration: none;">GitHub</a></p>
+    </footer>
+
+    <script>
+        // Add these functions before the chart initialization
+        function calculateMetrics(data) {
+            // Filter out null values
+            const validData = data.filter(value => value !== null);
+            if (validData.length === 0) return { avg: 0, jitter: 0 };
+            
+            // Calculate average
+            const avg = validData.reduce((sum, val) => sum + val, 0) / validData.length;
+            
+            // Calculate jitter (mean deviation between consecutive samples)
+            let jitter = 0;
+            if (validData.length > 1) {
+                let totalDiff = 0;
+                for (let i = 1; i < validData.length; i++) {
+                    totalDiff += Math.abs(validData[i] - validData[i-1]);
+                }
+                jitter = totalDiff / (validData.length - 1);
+            }
+            
+            return { avg: avg.toFixed(1), jitter: jitter.toFixed(1) };
+        }
+
+        function updateMetrics() {
+            const httpData = pingChart.data.datasets[0].data;
+            const wsData = pingChart.data.datasets[1].data;
+            
+            const httpMetrics = calculateMetrics(httpData);
+            const wsMetrics = calculateMetrics(wsData);
+            
+            document.getElementById('avgHttpPing').textContent = `${httpMetrics.avg} ms`;
+            document.getElementById('httpJitter').textContent = `${httpMetrics.jitter} ms`;
+            document.getElementById('avgWsPing').textContent = `${wsMetrics.avg} ms`;
+            document.getElementById('wsJitter').textContent = `${wsMetrics.jitter} ms`;
+        }
+
+
+
+        const maxDataPoints = 61;
+        // Initialize labels array once with negative values
+        const initialLabels = Array.from({ length: maxDataPoints }, (_, i) => -(maxDataPoints - 1 - i));
+        
+        // Update chart options
+        const chartOptions = {
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Ping (ms)'
+                    },
+                    suggestedMax: 50
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Time (seconds ago)'
+                    }
+                }
+            },
+            animation: true
+        };
+
+        // Combined Chart
+        const ctx = document.getElementById('pingChart').getContext('2d');
+        const pingChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: initialLabels,
+                datasets: [
+                    {
+                        label: 'HTTP Ping',
+                        data: Array(maxDataPoints).fill(null),  // Pre-fill with null values
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'WebSocket Ping',
+                        data: Array(maxDataPoints).fill(null),  // Pre-fill with null values
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: chartOptions
+        });
+
+        // HTTP Ping measurement
+        async function measureHttpPing() {
+            const start = performance.now();
+            const response = await fetch('/ping');
+            const end = performance.now();
+            const ping = end - start;
+
+            // Shift data to the left and add new point
+            pingChart.data.datasets[0].data.shift();
+            pingChart.data.datasets[0].data.push(ping);
+            
+            pingChart.update();
+            updateMetrics();
+        }
+
+        // WebSocket Ping measurement
+        const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+        
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+            measureWsPing();
+        };
+
+        function measureWsPing() {
+            const start = performance.now();
+            ws.send('ping');
+
+            ws.onmessage = function(event) {
+                const end = performance.now();
+                const ping = end - start;
+
+                // Shift data to the left and add new point
+                pingChart.data.datasets[1].data.shift();
+                pingChart.data.datasets[1].data.push(ping);
+
+                pingChart.update();
+                updateMetrics();
+                setTimeout(measureWsPing, 250);
+            };
+        }
+
+        // Start HTTP ping measurements
+        setInterval(measureHttpPing, 250);
+    </script>
+</body>
+</html>
+

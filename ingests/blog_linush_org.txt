@@ -1,0 +1,1672 @@
+Directory structure:
+└── blog.linush.org/
+    ├── server.py
+    ├── blog_src/
+    │   ├── Middleast_would_be_more_safe_if_iran_had_WMA.md
+    │   ├── Sonntags_Öffnungszeiten.md
+    │   └── test.md
+    ├── static/
+    │   ├── index.html
+    │   └── style.css
+    └── templates/
+        ├── blog_list_template.html
+        ├── blog_template.html
+        └── tag_list_template.html
+
+================================================
+FILE: server.py
+================================================
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+import sys
+import os
+import markdown
+from markdown.extensions import codehilite, toc, tables, fenced_code, footnotes
+import frontmatter
+from datetime import datetime
+from typing import List, Dict, Any
+import re
+from pathlib import Path
+
+app = FastAPI(title="Blog Server", description="A professional blog server with markdown support")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Markdown configuration with extensions
+def get_markdown_processor():
+    return markdown.Markdown(extensions=[
+        'codehilite',
+        'toc',
+        'tables',
+        'fenced_code',
+        'footnotes',
+        'attr_list',
+        'def_list',
+        'abbr',
+        'nl2br',
+        'sane_lists',
+        'smarty',
+        'wikilinks',
+        'meta'
+    ], extension_configs={
+        'codehilite': {
+            'css_class': 'highlight',
+            'use_pygments': True,
+            'noclasses': True
+        },
+        'toc': {
+            'permalink': True,
+            'permalink_class': 'toc-link',
+            'permalink_title': 'Link to this section'
+        }
+    })
+
+def process_markdown_file(file_path: str) -> Dict[str, Any]:
+    """Process a markdown file and return metadata and HTML content."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File {file_path} not found")
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        post = frontmatter.load(f)
+    
+    md = get_markdown_processor()
+    html_content = md.convert(post.content)
+    
+    # Extract metadata
+    metadata = post.metadata
+    
+    # Get file stats for date if not in frontmatter
+    file_stat = os.stat(file_path)
+    created_date = datetime.fromtimestamp(file_stat.st_ctime)
+    modified_date = datetime.fromtimestamp(file_stat.st_mtime)
+    
+    return {
+        'title': metadata.get('title', os.path.basename(file_path).replace('.md', '').replace('_', ' ').title()),
+        'content': html_content,
+        'toc': md.toc if hasattr(md, 'toc') else '',
+        'meta': md.Meta if hasattr(md, 'Meta') else {},
+        'created_date': metadata.get('date', created_date),
+        'modified_date': modified_date,
+        'author': metadata.get('author', 'Anonymous'),
+        'description': metadata.get('description', ''),
+        'tags': metadata.get('tags', []),
+        'filename': os.path.basename(file_path).replace('.md', '')
+    }
+
+def get_all_blog_posts() -> List[Dict[str, Any]]:
+    """Get all blog posts from the blog_src directory."""
+    blog_posts = []
+    blog_src_dir = Path('blog_src')
+    
+    if not blog_src_dir.exists():
+        return []
+    
+    for md_file in blog_src_dir.glob('*.md'):
+        try:
+            post_data = process_markdown_file(str(md_file))
+            blog_posts.append(post_data)
+        except Exception as e:
+            print(f"Error processing {md_file}: {e}")
+    
+    # Sort by creation date (newest first)
+    blog_posts.sort(key=lambda x: x['created_date'], reverse=True)
+    return blog_posts
+
+def create_blog_html(post_data: Dict[str, Any]) -> str:
+    """Create a complete HTML page for a blog post using a template file."""
+    template_path = "templates/blog_template.html"
+    with open(template_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    # Prepare replacements
+    replacements = {
+        "{{title}}": post_data["title"],
+        "{{author}}": post_data["author"],
+        "{{created_date}}": post_data["created_date"].strftime("%B %d, %Y"),
+        "{{description}}": post_data["description"],
+        "{{content}}": post_data["content"],
+        "{{toc}}": (
+            f'<div class="table-of-contents"><h3>Table of Contents</h3>{post_data["toc"]}</div>'
+            if post_data["toc"] else ""
+        ),
+        "{{tags}}": (
+            '<div class="post-tags">' +
+            "".join([f'<a href="/tag/{tag}" class="tag">{tag}</a>' for tag in post_data["tags"]]) +
+            '</div>' if post_data["tags"] else ""
+        ),
+    }
+
+    # Replace placeholders
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+
+    return template
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    """Serve the homepage."""
+    return FileResponse("static/index.html")
+
+@app.get("/blog/{filename}")
+async def get_blog_post(filename: str):
+    """Get a specific blog post by filename."""
+    file_path = f"blog_src/{filename}.md"
+    
+    try:
+        post_data = process_markdown_file(file_path)
+        return HTMLResponse(create_blog_html(post_data))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing blog post: {str(e)}")
+
+@app.get("/blogs")
+async def get_all_blogs_page():
+    """Get a page with all blog posts using a template."""
+    posts = get_all_blog_posts()
+
+    blog_cards = ""
+    for post in posts:
+        card = '<div class="blog-card">'
+        card += f'<h2><a href="/blog/{post["filename"]}">{post["title"]}</a></h2>'
+        card += '<div class="post-meta">'
+        card += f'<span>By {post["author"]}</span>'
+        card += f'<span>{post["created_date"].strftime("%B %d, %Y")}</span>'
+        card += '</div>'
+        if post["description"]:
+            card += f'<p class="post-description">{post["description"]}</p>'
+        if post["tags"]:
+            card += '<div class="post-tags">'
+            card += "".join([f'<a href="/tag/{tag}" class="tag">{tag}</a>' for tag in post["tags"]])
+            card += '</div>'
+        card += '</div>'
+        blog_cards += card
+
+    with open("templates/blog_list_template.html", "r", encoding="utf-8") as f:
+        template = f.read()
+
+    replacements = {
+        "{{title}}": "All Posts",
+        "{{header}}": "All Blog Posts",
+        "{{blog_cards}}": blog_cards,
+    }
+
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+
+    return HTMLResponse(template)
+
+@app.get("/tag/{tag_name}")
+async def get_posts_by_tag(tag_name: str):
+    """Get all blog posts that have the specified tag using a template."""
+    all_posts = get_all_blog_posts()
+    tagged_posts = [post for post in all_posts if tag_name.lower() in [tag.lower() for tag in post['tags']]]
+
+    blog_cards = ""
+    if not tagged_posts:
+        blog_cards = (
+            f'<div class="no-posts">'
+            f'<h2>No posts found with tag "{tag_name}"</h2>'
+            f'<p><a href="/blogs">View all posts</a> or <a href="/">return to homepage</a></p>'
+            f'</div>'
+        )
+        description = ""
+    else:
+        for post in tagged_posts:
+            card = '<div class="blog-card">'
+            card += f'<h2><a href="/blog/{post["filename"]}">{post["title"]}</a></h2>'
+            card += '<div class="post-meta">'
+            card += f'<span>By {post["author"]}</span>'
+            card += f'<span>{post["created_date"].strftime("%B %d, %Y")}</span>'
+            card += '</div>'
+            if post["description"]:
+                card += f'<p class="post-description">{post["description"]}</p>'
+            if post["tags"]:
+                card += '<div class="post-tags">'
+                card += "".join([f'<a href="/tag/{tag}" class="tag">{tag}</a>' for tag in post["tags"]])
+                card += '</div>'
+            card += '</div>'
+            blog_cards += card
+        description = f'Showing {len(tagged_posts)} post{"s" if len(tagged_posts) != 1 else ""} with this tag'
+
+    with open("templates/tag_list_template.html", "r", encoding="utf-8") as f:
+        template = f.read()
+
+    replacements = {
+        "{{title}}": f'Posts tagged "{tag_name}"',
+        "{{header}}": f'Posts tagged "{tag_name}"',
+        "{{description}}": description,
+        "{{blog_cards}}": blog_cards,
+        "{{section_footer}}": '<a href="/blogs" class="btn btn-outline">View All Posts</a>',
+    }
+
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+
+    return HTMLResponse(template)
+
+# API Routes
+@app.get("/api/posts")
+async def get_posts_api():
+    """API endpoint to get all blog posts."""
+    posts = get_all_blog_posts()
+    
+    # Return simplified data for API
+    api_posts = []
+    for post in posts:
+        api_posts.append({
+            'title': post['title'],
+            'filename': post['filename'],
+            'author': post['author'],
+            'created_date': post['created_date'].isoformat(),
+            'description': post['description'],
+            'tags': post['tags']
+        })
+    
+    return JSONResponse(content={"posts": api_posts})
+
+@app.get("/api/posts/latest")
+async def get_latest_posts_api(limit: int = 5):
+    """API endpoint to get the latest blog posts."""
+    posts = get_all_blog_posts()[:limit]
+    
+    api_posts = []
+    for post in posts:
+        api_posts.append({
+            'title': post['title'],
+            'filename': post['filename'],
+            'author': post['author'],
+            'created_date': post['created_date'].isoformat(),
+            'description': post['description'],
+            'tags': post['tags']
+        })
+    
+    return JSONResponse(content={"posts": api_posts})
+
+@app.get("/api/posts/{filename}")
+async def get_post_api(filename: str):
+    """API endpoint to get a specific blog post."""
+    file_path = f"blog_src/{filename}.md"
+    
+    try:
+        post_data = process_markdown_file(file_path)
+        return JSONResponse(content={
+            'title': post_data['title'],
+            'content': post_data['content'],
+            'author': post_data['author'],
+            'created_date': post_data['created_date'].isoformat(),
+            'description': post_data['description'],
+            'tags': post_data['tags'],
+            'toc': post_data['toc']
+        })
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Blog post not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing blog post: {str(e)}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return JSONResponse(status_code=200, content={"status": "ok"})
+
+# Fallback for static files
+@app.get("/{path:path}")
+async def serve_static_file(path: str):
+    """Serve static files as fallback."""
+    if path == "":
+        return await home()
+    
+    file_path = os.path.join("static", path)
+    
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+
+if __name__ == "__main__":
+    port = 8000
+    if len(sys.argv) > 1:
+        port = int(sys.argv[1])
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+
+================================================
+FILE: blog_src/Middleast_would_be_more_safe_if_iran_had_WMA.md
+================================================
+---
+title: The Middle East Would Be Safer If Iran Had Weapons of Mass Destruction
+author: Linus Horn
+tags: [Geopolitics, Opinion]
+description: An analysis of the potential impact on regional stability if Iran possessed WMDs.
+created_date: 2025-07-11
+---
+
+# Israel's Nuclear Monopoly in the Middle East
+
+The Middle East is a region fraught with tension and conflict[^1]. While every other region with such a huge conflict potential has multiple actors with nuclear weapons, the Middle East has only one nuclear power: Israel[^2]. This nuclear monopoly creates a situation where Israel, with backing from the U.S., has unchecked power in the region[^3]. Over the past decades, we have seen Israel repeatedly attack its neighbors, including most notably Palestine, Lebanon, and Syria. These attacks have often been justified under the pretext of self-defense or preemptive action against perceived threats[^4]. However, the reality is that these strikes have led to significant loss of life and destabilization of the region. The absence of a balance of power, such as that provided by multiple nuclear states, has made it easier for Israel to act with impunity[^3].
+
+# Mutually Assured Destruction
+
+The concept of Mutually Assured Destruction (MAD) has been a cornerstone of nuclear deterrence theory since the Cold War. The idea is simple: if two opposing sides possess the capability to destroy each other with nuclear weapons, neither side is likely to initiate a conflict.  
+While this principle has not stopped opposing nations from making threats or engaging in proxy wars, no nation has ever followed through on a nuclear attack against another nuclear power. The most prominent examples of this are the Russia-Ukraine war and the tensions between North Korea and South Korea.  
+In the case of the Russian invasion of Ukraine, Vladimir Putin has repeatedly threatened the use of nuclear weapons, but has never followed through, because if he did, Russia would be destroyed in retaliatory strikes by Ukraine's allies such as the U.S., France and the UK.  
+Similarly, North Korea has made numerous threats against South Korea and the U.S., but has never launched a nuclear attack, knowing that such an action would lead to its own destruction by the overwhelming military response from the U.S. and other allies of South Korea.  
+
+In both cases, the presence of nuclear weapons, by the U.S. and its allies, has acted as a deterrent against the use of nuclear weapons for offensive purposes.  
+This is also not unique to these two scenarios. The principle of MAD has been a significant factor in preventing nuclear war since the cold war, as it creates a situation where the costs of initiating a nuclear conflict are too high for any rational actor to bear.  
+
+
+# Iran as a rational actor
+
+From a western perspective, Iran is often portrayed as a rogue state, driven by irrational ideology and a desire to spread its influence across the Middle East.  
+However, this view overlooks the fact that Iran is a rational actor, motivated by national interests and security concerns.  
+And for Iran, the most significant threat comes from Israel's unbalanced power. The presence of a nuclear-armed Israel, coupled with the lack of any similar capability in Iran, creates a significant security dilemma for Tehran.  
+
+Iran's desire to develop nuclear weapons is therefore not driven by a desire to use them offensively, but rather by a need to ensure its own survival in a hostile environment, perpetuated by Israel's aggressions.  
+Contrary to Israel's claims, Iran's nuclear program would actually be a stabilizing force in the region, as it would lead to a situation of MAD, where both Iran and Israel possess the capability to inflict unacceptable damage on each other in the event of a conflict.  
+
+# Addressing Counterarguments
+
+## "Israel won't exist in 25 years"
+
+Many proponents of the idea that Iran should not have nuclear weapons argue that Iran has a stated goal of destroying Israel, and therefore cannot be trusted with such a capability.  
+
+However, this argument overlooks two key points:
+- First, the idea that Iran's leadership is so irrational that it would launch a nuclear attack on Israel, knowing that it would lead to its own destruction, is not supported by evidence.
+- Second, Israel has also made similar serious threats against Iran, mostly going back to the early 2000s, with Israeli leaders like Benjamin Netanyahu and Ehud Olmert repeatedly verbally threatening attacks on Iran if it continued its pursuit of nuclear weapons.
+
+To the people of Iran, these threats are not just empty rhetoric, but a real and present danger as Israel does actually have the capability to carry out such an attack and "wipe Iran off the map".  
+
+A helpful brain-exercise is to imagine what would happen if Iran's and Israels roles were reversed:  
+Imagine if Iran, backed by Russia and China, had a nuclear monopoly in the Middle East, while making threats that, if Israel, who at this time would not have any nuclear weapons, continued its pursuit of defensive nuclear weapons, it would be "wiped off the map".  
+In this scenario, it is easy to see how the power imbalance caused by the nuclear monopoly could only be solved by the weaker nation acquiring its own nuclear weapons, to ensure mutual destruction and deter any potential attacks.  
+
+## "Iran is not a rational actor"
+
+Many people argue that Iran's foreign policy is not driven by rationality but rather by ideology and religious fervor.  
+
+However, if we define rationality not only as acting in their own self-interest, but also as updating their geopolitical views and strategies as the global landscape has changed in service of themselves, then it becomes clear that Iran's leadership is capable of rational decision-making.  
+
+While Iran has been calling for the destruction if Israel since the toppling of the Shah in 1979, the reality is that Iran already has a significant arsenal of conventional weapons and a well-trained military and has not used these capabilities to attack Israel.  
+
+What I believe people fundamentally misunderstand about Iran and the middle east overall is there is rhetoric has always been amplified to levels that are only starting to emerge in pockets of western media.  
+
+The disconnect between what leaders say and what they actually do is not unique to Iran, but is a common feature of international relations (see also: Donald Trump, Vladimir Putin, Kim Jong Un, etc.).
+
+# Conclusion
+
+
+As shown, nuclear proliferation does not have to be bad, and in many cases, it can actually be a stabilizing force in a region and lead to a more peaceful coexistence between nations.  
+The focus on non-proliferation, while well-intentioned, has often been used as a tool to maintain the status quo of power imbalances toward the Western powers, particularly the U.S. and NATO.  
+Instead, a more balanced approach that recognizes the need for multiple nuclear powers in the Middle East could lead to a more stable and secure region.  
+This would require a shift in the narrative, from one that demonizes nuclear proliferation to one that recognizes the importance of a balance of power in ensuring regional stability.  
+
+**True peace in the Middle East may lie not in disarmament, but in the paradoxical security that comes from mutual vulnerability.**
+
+
+<br>
+<br>
+
+If you have any questions, comments or suggestions, please feel free to reach out to me via [E-Mail](mailto:blog@linush.org).
+
+
+
+[^1]: [List of modern conflicts in the middle east (wikipedia)](https://en.wikipedia.org/wiki/List_of_modern_conflicts_in_the_Middle_East)
+[^2]: ["Israel is widely understood to have nuclear weapons, with a medium-sized arsenal, but does not officially acknowledge it, maintaining a policy of deliberate ambiguity."](https://en.wikipedia.org/wiki/List_of_states_with_nuclear_weapons)
+[^3]: [Dr. Shehab Al Makahleh: "Given the influential backing of certain global powers, the prospects of meaningful enforcement mechanisms being imposed on Israel remain slim. The unwavering support extended to Israel by influential global powers has shielded the nation from meaningful repercussions, effectively granting it carte blanche to act with apparent impunity."](https://geostrategicmedia.com/2023/11/01/al-makahleh-israels-unchecked-power-a-dangerous-precedent-for-international-law/)
+[^4]: ["Israel and its allies, meanwhile, have insisted the bombings are justified because it has the right to self-defence in response to the October 7 Hamas attacks "](https://www.aljazeera.com/news/2023/11/17/does-israel-have-the-right-to-self-defence-in-gaza)
+
+
+
+================================================
+FILE: blog_src/Sonntags_Öffnungszeiten.md
+================================================
+---
+title: x
+author: Linus Horn
+tags: [Opinion, Deutschland, Religion, Politics]
+description: x
+created_date: 2025-07-11
+---
+
+
+
+
+================================================
+FILE: blog_src/test.md
+================================================
+---
+title: One Markdown to rule them all
+author: Linus Horn
+tags: [Markdown, Showcase]
+description: A showcase of all Markdown features
+created_date: 2023-10-01
+---
+
+# Markdown Feature Showcase
+
+## Headings
+
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
+
+---
+
+## Text Styles
+
+**Bold text**
+
+*Italic text*
+
+~~Strikethrough~~
+
+__Bold and _italic_ combined__
+
+> Blockquote example
+
+> ### Nested Blockquote
+> - With a list inside
+
+---
+
+## Lists
+
+### Unordered List
+
+- Item 1
+  - Subitem 1.1
+  - Subitem 1.2
+- Item 2
+
+### Ordered List
+
+1. First item
+2. Second item
+   1. Subitem 2.1
+   2. Subitem 2.2
+
+---
+
+## Links
+
+[Markdown Guide](https://www.markdownguide.org)
+
+<https://www.example.com>
+
+---
+
+## Images
+
+![Markdown Logo](https://markdown-here.com/img/icon256.png)
+
+---
+
+## Inline Code and Code Blocks
+
+Inline code: `print("Hello, Markdown!")`
+
+```python
+def greet(name: str) -> None:
+    print(f"Hello, {name}!")
+```
+
+```javascript
+function greet(name) {
+  console.log(`Hello, ${name}!`);
+}
+```
+
+---
+
+## Tables
+
+| Syntax      | Description | Example           |
+|-------------|-------------|-------------------|
+| Header      | Title       | **Bold**          |
+| Paragraph   | Text        | *Italic*          |
+| Link        | URL         | [Link](#)         |
+
+---
+
+## Task Lists
+
+- [x] Write Markdown file
+- [ ] Use all features
+- [x] Include code blocks
+
+---
+
+## Horizontal Rule
+
+---
+
+## Footnotes
+
+Here is a footnote reference.[^1]
+
+[^1]: This is the footnote content.
+
+---
+
+## Emoji
+
+:smile: :rocket: :tada:
+
+---
+
+## Inline LaTeX
+
+Inline math: $E = mc^2$
+
+Display math:
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}
+$$
+
+---
+
+## HTML
+
+<div style="color: red; font-weight: bold;">This is HTML inside Markdown!</div>
+
+---
+
+## Escaping Characters
+
+\*This text is not italicized\*
+
+---
+
+## Definition Lists
+
+Term 1
+: Definition 1
+
+Term 2
+: Definition 2
+
+---
+
+## Superscript and Subscript
+
+H~2~O
+
+X^2^
+
+---
+
+## Custom ID for Heading
+
+### Heading with custom ID {#custom-id}
+
+
+
+================================================
+FILE: static/index.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linus Horn's Blog</title>
+    <meta name="description" content="Exploring the intersections of technology, the elegance of mathematics, and the complex systems of geopolitics.">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=VT323&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">Linus Horn's Blog</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/blogs">Blogs</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Latest Posts Section -->
+    <section id="latest" class="latest-posts">
+        <div class="container">
+            <h2 class="section-title">My Latest Posts</h2>
+            <div id="latest-posts-container" class="posts-grid">
+                <!-- Posts will be loaded dynamically -->
+            </div>
+            <div class="section-footer">
+                <a href="/blogs" class="btn btn-outline">Explore The Archive</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>© 2025 Linus Horn.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Load latest posts
+        async function loadLatestPosts() {
+            try {
+                const response = await fetch('/api/posts/latest?limit=3');
+                const data = await response.json();
+                const container = document.getElementById('latest-posts-container');
+                
+                if (data.posts && data.posts.length > 0) {
+                    container.innerHTML = data.posts.map(post => `
+                        <div class="post-card">
+                            <div class="post-card-header">
+                                <h3><a href="/blog/${post.filename}">${post.title}</a></h3>
+                                <div class="post-meta">
+                                    <span class="post-author">By ${post.author}</span>
+                                    <span class="post-date">${new Date(post.created_date).toLocaleDateString('en-US', { 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    })}</span>
+                                </div>
+                            </div>
+                            <div class="post-card-content">
+                                ${post.description ? `<p>${post.description}</p>` : ''}
+                                ${post.tags && post.tags.length > 0 ? `
+                                    <div class="post-tags">
+                                        ${post.tags.map(tag => `<a href="/tag/${tag}" class="tag">${tag}</a>`).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `
+                        <div class="no-posts">
+                            <h3>No posts yet</h3>
+                            <p>Check back soon for new content!</p>
+                        </div>
+                    `;
+                }
+                
+                // Update posts count
+                const postsCountEl = document.getElementById('posts-count');
+                if (postsCountEl) {
+                    const allPostsResponse = await fetch('/api/posts');
+                    const allPostsData = await allPostsResponse.json();
+                    postsCountEl.textContent = allPostsData.posts ? allPostsData.posts.length : '0';
+                }
+            } catch (error) {
+                console.error('Error loading posts:', error);
+                document.getElementById('latest-posts-container').innerHTML = `
+                    <div class="error-message">
+                        <h3>Unable to load posts</h3>
+                        <p>Please try again later.</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Load content when page is ready
+        document.addEventListener('DOMContentLoaded', loadLatestPosts);
+    </script>
+</body>
+</html>
+
+
+
+================================================
+FILE: static/style.css
+================================================
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.6;
+    color: #2d3748;
+    background-color: #ffffff;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.2;
+    color: #1a202c;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.5rem; }
+h4 { font-size: 1.25rem; }
+h5 { font-size: 1.125rem; }
+h6 { font-size: 1rem; }
+
+p {
+    margin-bottom: 1rem;
+}
+
+a {
+    color: #3182ce;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+a:hover {
+    color: #2c5aa0;
+}
+
+/* Container */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    margin-top: 80px; /* Adjust for fixed navbar */
+    padding: 0 2rem;
+}
+
+/* Navigation */
+.navbar {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid #e2e8f0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    transition: all 0.3s ease;
+}
+
+.nav-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+}
+
+.nav-brand {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #1a202c;
+    text-decoration: none;
+}
+
+.nav-links {
+    display: flex;
+    gap: 2rem;
+}
+
+.nav-links a {
+    color: #4a5568;
+    font-weight: 500;
+    transition: color 0.2s ease;
+}
+
+.nav-links a:hover {
+    color: #3182ce;
+}
+
+/* Buttons */
+.btn {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    border: none;
+    font-size: 1rem;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: #667eea;
+    border: 2px solid #667eea;
+}
+
+.btn-secondary:hover {
+    background: #667eea;
+    color: white;
+}
+
+.btn-outline {
+    background: transparent;
+    color: #4a5568;
+    border: 2px solid #e2e8f0;
+}
+
+.btn-outline:hover {
+    background: #f7fafc;
+    border-color: #cbd5e0;
+}
+
+/* Hero Section */
+.hero {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 8rem 0 6rem;
+    margin-top: 80px;
+    overflow: hidden;
+}
+
+.hero-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+.hero-title {
+    font-size: 3.5rem;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    background: linear-gradient(120deg, #ffffff 0%, #e2e8f0 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.hero-subtitle {
+    font-size: 1.25rem;
+    margin-bottom: 2rem;
+    opacity: 0.9;
+}
+
+.hero-buttons {
+    display: flex;
+    gap: 1rem;
+}
+
+.hero-visual {
+    display: flex;
+    justify-content: center;
+}
+
+.hero-card {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 1rem;
+    padding: 0;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-dots {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.dot.red { background: #ff5f56; }
+.dot.yellow { background: #ffbd2e; }
+.dot.green { background: #27ca3f; }
+
+.card-content {
+    padding: 1.5rem;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.9rem;
+}
+
+.code-line {
+    margin-bottom: 0.5rem;
+}
+
+.code-indent {
+    padding-left: 2rem;
+}
+
+.code-comment { color: #a0aec0; }
+.code-keyword { color: #ff6b6b; }
+.code-function { color: #4ecdc4; }
+.code-string { color: #ffe66d; }
+
+/* Latest Posts Section */
+.latest-posts {
+    padding: 6rem 0;
+    background: #f7fafc;
+}
+
+.section-title {
+    text-align: center;
+    margin-bottom: 3rem;
+    font-size: 2.5rem;
+    color: #1a202c;
+}
+
+.posts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.post-card {
+    background: white;
+    border-radius: 1rem;
+    padding: 2rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+    border: 1px solid #e2e8f0;
+}
+
+.post-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+.post-card-header h3 {
+    margin-bottom: 1rem;
+}
+
+.post-card-header h3 a {
+    color: #1a202c;
+    text-decoration: none;
+}
+
+.post-card-header h3 a:hover {
+    color: #3182ce;
+}
+
+.post-meta {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    color: #718096;
+}
+
+.post-card-content p {
+    color: #4a5568;
+    margin-bottom: 1rem;
+}
+
+.post-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.tag {
+    background: #e2e8f0;
+    color: #4a5568;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.section-footer {
+    text-align: center;
+}
+
+/* Skeleton Loading */
+.skeleton {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.skeleton-title {
+    height: 1.5rem;
+    background: #e2e8f0;
+    border-radius: 0.25rem;
+    margin-bottom: 1rem;
+}
+
+.skeleton-meta {
+    height: 1rem;
+    background: #e2e8f0;
+    border-radius: 0.25rem;
+    width: 60%;
+    margin-bottom: 1rem;
+}
+
+.skeleton-content {
+    height: 4rem;
+    background: #e2e8f0;
+    border-radius: 0.25rem;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Features Section */
+.features {
+    padding: 6rem 0;
+    background: white;
+}
+
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 3rem;
+}
+
+.feature-card {
+    text-align: center;
+    padding: 2rem;
+}
+
+.feature-icon {
+    font-size: 3rem;
+    margin-bottom: 1.5rem;
+}
+
+.feature-card h3 {
+    margin-bottom: 1rem;
+    color: #1a202c;
+}
+
+.feature-card p {
+    color: #4a5568;
+}
+
+/* About Section */
+.about {
+    padding: 6rem 0;
+    background: #f7fafc;
+}
+
+.about-content {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 4rem;
+    align-items: center;
+}
+
+.about-text h2 {
+    margin-bottom: 2rem;
+    color: #1a202c;
+}
+
+.about-text p {
+    color: #4a5568;
+    font-size: 1.125rem;
+}
+
+.about-stats {
+    display: grid;
+    gap: 2rem;
+}
+
+.stat {
+    text-align: center;
+    padding: 1.5rem;
+    background: white;
+    border-radius: 1rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.stat-number {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #667eea;
+    margin-bottom: 0.5rem;
+}
+
+.stat-label {
+    color: #4a5568;
+    font-size: 0.875rem;
+}
+
+/* Footer */
+.footer {
+    background: #1a202c;
+    color: white;
+    padding: 4rem 0 2rem;
+}
+
+.footer-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 3rem;
+    margin-bottom: 2rem;
+}
+
+.footer-section h4 {
+    margin-bottom: 1rem;
+    color: white;
+}
+
+.footer-section p {
+    color: #a0aec0;
+}
+
+.footer-section ul {
+    list-style: none;
+}
+
+.footer-section ul li {
+    margin-bottom: 0.5rem;
+}
+
+.footer-section ul li a {
+    color: #a0aec0;
+    transition: color 0.2s ease;
+}
+
+.footer-section ul li a:hover {
+    color: white;
+}
+
+.footer-bottom {
+    border-top: 1px solid #2d3748;
+    padding-top: 2rem;
+    text-align: center;
+    color: #a0aec0;
+}
+
+/* Blog Post Styles */
+.blog-post {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 0;
+}
+
+.post-header {
+    margin-bottom: 3rem;
+    text-align: center;
+}
+
+.post-title {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    color: #1a202c;
+}
+
+.post-content {
+    line-height: 1.8;
+    font-size: 1.125rem;
+}
+
+.post-content h1,
+.post-content h2,
+.post-content h3,
+.post-content h4,
+.post-content h5,
+.post-content h6 {
+    margin: 2rem 0 1rem;
+    color: #1a202c;
+}
+
+.post-content p {
+    margin-bottom: 1.5rem;
+    color: #4a5568;
+}
+
+.post-content ul,
+.post-content ol {
+    margin-bottom: 1.5rem;
+    padding-left: 2rem;
+}
+
+.post-content li {
+    margin-bottom: 0.5rem;
+    color: #4a5568;
+}
+
+.post-content blockquote {
+    border-left: 4px solid #667eea;
+    padding: 1rem 1.5rem;
+    margin: 2rem 0;
+    background: #f7fafc;
+    border-radius: 0 0.5rem 0.5rem 0;
+    font-style: italic;
+}
+
+.post-content code {
+    background: #f1f5f9;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.875rem;
+    color: #e53e3e;
+}
+
+.post-content pre {
+    background: #1a202c;
+    color: white;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin: 2rem 0;
+    font-family: 'Fira Code', monospace;
+}
+
+.post-content pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+}
+
+.post-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2rem 0;
+    background: white;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.post-content th,
+.post-content td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.post-content th {
+    background: #f7fafc;
+    font-weight: 600;
+    color: #1a202c;
+}
+
+.post-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.5rem;
+    margin: 2rem 0;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.table-of-contents {
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin: 2rem 0;
+}
+
+.table-of-contents h3 {
+    margin-bottom: 1rem;
+    color: #1a202c;
+}
+
+.table-of-contents ul {
+    padding-left: 1rem;
+}
+
+.table-of-contents a {
+    color: #3182ce;
+    text-decoration: none;
+}
+
+.table-of-contents a:hover {
+    text-decoration: underline;
+}
+
+.toc-link {
+    color: #a0aec0;
+    text-decoration: none;
+    margin-left: 0.5rem;
+}
+
+.toc-link:hover {
+    color: #3182ce;
+}
+
+/* Blog List Styles */
+.blog-list {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.blog-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 1rem;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    transition: all 0.3s ease;
+}
+
+.blog-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+.blog-card h2 {
+    margin-bottom: 1rem;
+}
+
+.blog-card h2 a {
+    color: #1a202c;
+    text-decoration: none;
+}
+
+.blog-card h2 a:hover {
+    color: #3182ce;
+}
+
+.post-description {
+    color: #4a5568;
+    margin-bottom: 1rem;
+}
+
+/* Error and No Content States */
+.no-posts,
+.error-message {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #4a5568;
+}
+
+.no-posts h3,
+.error-message h3 {
+    margin-bottom: 1rem;
+    color: #1a202c;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .nav-container {
+        padding: 1rem;
+    }
+    
+    .nav-links {
+        gap: 1rem;
+    }
+    
+    .hero {
+        padding: 6rem 0 4rem;
+    }
+    
+    .hero-container {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+        text-align: center;
+    }
+    
+    .hero-title {
+        font-size: 2.5rem;
+    }
+    
+    .hero-buttons {
+        justify-content: center;
+    }
+    
+    .posts-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .about-content {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+    
+    .footer-content {
+        grid-template-columns: 1fr;
+        text-align: center;
+    }
+    
+    .post-title {
+        font-size: 2rem;
+    }
+    
+    .container {
+        padding: 0 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .hero-title {
+        font-size: 2rem;
+    }
+    
+    .section-title {
+        font-size: 2rem;
+    }
+    
+    .post-title {
+        font-size: 1.75rem;
+    }
+    
+    .hero-buttons {
+        flex-direction: column;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .navbar,
+    .footer,
+    .hero-visual {
+        display: none;
+    }
+    
+    .hero {
+        background: none;
+        color: black;
+        padding: 2rem 0;
+    }
+    
+    .post-content {
+        font-size: 12pt;
+        line-height: 1.4;
+    }
+}
+
+
+
+================================================
+FILE: templates/blog_list_template.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - Linus Horn's Blog</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">Linus Horn's Blog</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/blogs">Blogs</a>
+            </div>
+        </div>
+    </nav>
+    
+    <main class="container">
+        <h1>{{header}}</h1>
+        <div class="blog-list">
+            {{blog_cards}}
+        </div>
+    </main>
+    
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>© 2025 Linus Horn.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
+
+
+
+================================================
+FILE: templates/blog_template.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - My Blog</title>
+    <meta name="description" content="{{description}}">
+    <meta name="author" content="{{author}}">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/contrib/auto-render.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">Linus Horn's Blog</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/blogs">Blogs</a>
+            </div>
+        </div>
+    </nav>
+    
+    <main class="container">
+        <article class="blog-post">
+            <header class="post-header">
+                <h1 class="post-title">{{title}}</h1>
+                <div class="post-meta">
+                    <span class="post-author">By {{author}}</span>
+                    <span class="post-date">{{created_date}}</span>
+                </div>
+                {{tags}}
+            </header>
+            
+            {{toc}}
+            
+            <div class="post-content">
+                {{content}}
+            </div>
+        </article>
+    </main>
+    
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>© 2025 Linus Horn.</p>
+            </div>
+        </div>
+    </footer>
+    
+    <script>
+        // Render LaTeX
+        document.addEventListener("DOMContentLoaded", function() {
+            renderMathInElement(document.body, {
+                delimiters: [
+                    {left: "$$", right: "$$", display: true},
+                    {left: "$", right: "$", display: false},
+                    {left: "\\(", right: "\\)", display: false},
+                    {left: "\\[", right: "\\]", display: true}
+                ]
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+================================================
+FILE: templates/tag_list_template.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - My Blog</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">Linus Horn's Blog</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/blogs">Blogs</a>
+            </div>
+        </div>
+    </nav>
+    
+    <main class="container">
+        <div class="page-header">
+            <h1>{{header}}</h1>
+            <p class="tag-description">{{description}}</p>
+        </div>
+        <div class="blog-list">
+            {{blog_cards}}
+        </div>
+        <div class="section-footer">
+            {{section_footer}}
+        </div>
+    </main>
+    
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>© 2025 Linus Horn.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
+
+
