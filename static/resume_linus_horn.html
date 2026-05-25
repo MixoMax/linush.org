@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linus Horn — Resume</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+
+@page {
+  size: A4;
+  margin: 18mm 18mm 16mm 18mm;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color: #1a1a18;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.8rem 3rem;
+  background: #fff;
+}
+
+/* --- HEADER --- */
+.header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 2rem;
+  align-items: end;
+  margin-bottom: 1.1rem;
+}
+.name {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 26pt;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  color: #1a1a18;
+}
+.tagline {
+  font-size: 9.5pt;
+  font-weight: 300;
+  color: #666660;
+  margin-top: 5px;
+  letter-spacing: 0.3px;
+}
+.contact-block {
+  text-align: right;
+}
+.contact-block a, .contact-block span {
+  display: block;
+  font-size: 9pt;
+  color: #555550;
+  text-decoration: none;
+  line-height: 1.6;
+}
+
+/* --- RULE SYSTEM --- */
+.rule-top {
+  border: none;
+  border-top: 2px solid #1a1a18;
+  margin-bottom: 0;
+}
+.rule-thin {
+  border: none;
+  border-top: 0.5px solid #c8c8c0;
+  margin: 11px 0;
+}
+
+/* --- SECTION --- */
+.section {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 0 18px;
+  margin-top: 10px;
+}
+.section-label {
+  font-size: 7.5pt;
+  font-weight: 500;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: #888880;
+  padding-top: 2px;
+  line-height: 1.3;
+}
+.section-body { }
+
+/* --- ENTRY --- */
+.entry {
+  margin-bottom: 10px;
+}
+.entry:last-child { margin-bottom: 0; }
+
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.entry-role {
+  font-family: 'Lora', Georgia, serif;
+  font-weight: 600;
+  font-size: 10.5pt;
+  color: #1a1a18;
+}
+.entry-date {
+  font-size: 8.5pt;
+  color: #888880;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.entry-org {
+  font-size: 9.5pt;
+  color: #555550;
+  font-weight: 400;
+  margin-bottom: 2px;
+}
+.entry-desc {
+  font-size: 9pt;
+  color: #555550;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.bullets {
+  list-style: none;
+  padding: 0;
+  margin-top: 3px;
+}
+.bullets li {
+  font-size: 9pt;
+  color: #555550;
+  padding-left: 11px;
+  position: relative;
+  margin-bottom: 2px;
+  line-height: 1.45;
+}
+.bullets li::before {
+  content: "–";
+  position: absolute;
+  left: 0;
+  color: #b0b0a8;
+}
+
+/* --- TAGS --- */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.tag {
+  font-size: 7.5pt;
+  padding: 1.5px 6px;
+  border: 0.5px solid #c8c8c0;
+  color: #666660;
+  background: #f5f5f0;
+}
+.tag-accent {
+  background: #1a1a18;
+  color: #f5f5f0;
+  border-color: #1a1a18;
+  font-weight: 500;
+}
+
+/* --- CALLOUT --- */
+.callout {
+  border-left: 2px solid #1a1a18;
+  padding: 6px 10px;
+  background: #f5f5f0;
+  margin-top: 8px;
+}
+.callout-label {
+  font-size: 7pt;
+  font-weight: 500;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #888880;
+  margin-bottom: 2px;
+}
+.callout-text {
+  font-size: 8.5pt;
+  color: #555550;
+  line-height: 1.45;
+}
+
+/* --- PROJECTS GRID --- */
+.project-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.proj-card {
+  border: 0.5px solid #c8c8c0;
+  padding: 9px 11px;
+  background: #fafaf8;
+}
+.proj-name {
+  font-family: 'Lora', Georgia, serif;
+  font-weight: 600;
+  font-size: 9.5pt;
+  color: #1a1a18;
+  margin-bottom: 1px;
+}
+.proj-type {
+  font-size: 8pt;
+  color: #888880;
+  margin-bottom: 5px;
+}
+.proj-desc {
+  font-size: 8.5pt;
+  color: #555550;
+  line-height: 1.45;
+}
+
+/* --- SKILLS GRID --- */
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 12px;
+}
+.skill-group-title {
+  font-size: 8pt;
+  font-weight: 500;
+  color: #1a1a18;
+  margin-bottom: 3px;
+}
+.skill-items {
+  font-size: 8.5pt;
+  color: #666660;
+  line-height: 1.6;
+}
+
+/* --- INFRA TAGS --- */
+.infra-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* --- PRINT RESETS --- */
+@media print {
+  body { font-size: 9.5pt; }
+  .page { padding: 0; max-width: 100%; }
+  a { color: inherit; text-decoration: none; }
+}
+</style>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div>
+      <h1 class="name">Linus Horn</h1>
+      <p class="tagline">Computer Science student &middot; Backend engineer &middot; ML infrastructure</p>
+    </div>
+    <div class="contact-block">
+      <a href="https://linush.org">linush.org</a>
+      <a href="https://github.com/MixoMax">github.com/MixoMax</a>
+      <a href="mailto:linus@linush.org">linus@linush.org</a>
+      <span>Rostock, Germany</span>
+    </div>
+  </div>
+
+  <hr class="rule-top">
+
+  <!-- EDUCATION -->
+  <div class="section">
+    <p class="section-label">Education</p>
+    <div class="section-body">
+      <div class="entry">
+        <div class="entry-header">
+          <span class="entry-role">B.Sc. Computer Science</span>
+          <span class="entry-date">WS 2024 – present &middot; 4th semester</span>
+        </div>
+        <p class="entry-org">University of Rostock</p>
+        <p class="entry-desc">Algorithms &amp; data structures, software engineering, AI/ML systems — applied directly in production homelab and open-source projects.</p>
+      </div>
+
+      <div class="entry">
+        <div class="entry-header">
+          <span class="entry-role">Abitur</span>
+          <span class="entry-date">2022 – 2024 &middot; GPA 1.9</span>
+        </div>
+        <p class="entry-org">Wilhelm-Gymnasium Hamburg</p>
+        <p class="entry-desc">Leistungskurse: Mathematics &middot; English &middot; Physics &middot; Geography</p>
+      </div>
+
+      <div class="callout">
+        <p class="callout-label">Distinction</p>
+        <p class="callout-text"><strong>High Seas High School</strong> (2021–2022) &mdash; 7 months at sea aboard the tallship <em>Gulden Leeuw</em>. Completed full secondary curriculum mid-Atlantic while serving as watch officer: chart &amp; celestial navigation, seamanship, team operations under real maritime conditions.</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule-thin">
+
+  <!-- EXPERIENCE -->
+  <div class="section">
+    <p class="section-label">Experience</p>
+    <div class="section-body">
+
+      <div class="entry">
+        <div class="entry-header">
+          <span class="entry-role">Data Analyst Intern</span>
+          <span class="entry-date">2024 &middot; 2 weeks &middot; Taichung, Taiwan</span>
+        </div>
+        <p class="entry-org">JERA Next — Formosa 2 Offshore Wind Park</p>
+        <p class="entry-desc">Embedded in operations of a 47-turbine offshore wind farm processing &gt;4 M sensor readings per day (150 sensors &times; 47 turbines at 5 s resolution).</p>
+        <ul class="bullets">
+          <li>Built live monitoring dashboards tracking turbine performance in real time</li>
+          <li>Developed predictive maintenance models from vibration, temperature, and power output time-series</li>
+          <li>Automated weekly ops reports, replacing manual extraction for the full operations team</li>
+          <li>End-to-end pipeline ownership: raw ingest → feature engineering → model → dashboard → report</li>
+        </ul>
+        <div class="tags">
+          <span class="tag">Python</span><span class="tag">Pandas</span><span class="tag">Scikit-learn</span><span class="tag">SQL</span><span class="tag">Jupyter</span><span class="tag">Predictive maintenance</span>
+        </div>
+      </div>
+
+      <div class="entry">
+        <div class="entry-header">
+          <span class="entry-role">Python Backend Developer &amp; Data Analyst</span>
+          <span class="entry-date">2022 – 2023 &middot; 9 months</span>
+        </div>
+        <p class="entry-org">ITVT Süd GmbH <span style="font-size:8pt;color:#888880">(Minijob)</span></p>
+        <ul class="bullets">
+          <li>Built semantic search infrastructure using embedding models and vector DBs (Qdrant, Pinecone, Weaviate)</li>
+          <li>Designed and deployed FastAPI microservices for data acquisition and processing pipelines</li>
+          <li>Implemented RAG-style retrieval systems over proprietary document corpora</li>
+          <li>Automated API testing framework: latency benchmarking and correctness validation, surfacing slow and broken routes</li>
+        </ul>
+        <div class="tags">
+          <span class="tag">Python</span><span class="tag">FastAPI</span><span class="tag">TensorFlow</span><span class="tag">Qdrant</span><span class="tag">Pinecone</span><span class="tag">Weaviate</span><span class="tag">Postgres</span><span class="tag">RAG</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <hr class="rule-thin">
+
+  <!-- PROJECTS -->
+  <div class="section">
+    <p class="section-label">Projects</p>
+    <div class="section-body">
+      <div class="project-grid">
+        <div class="proj-card">
+          <p class="proj-name">globe.linush.org</p>
+          <p class="proj-type">3D geospatial graph traversal engine</p>
+          <p class="proj-desc">Models the world map as a BFS-traversable graph. Wikipedia ETL → directed graph → FastAPI BFS endpoint O(V+E) → Globe.gl + D3.js 3D visualization with MultiPolygon rendering.</p>
+          <div class="tags" style="margin-top:6px"><span class="tag">Python</span><span class="tag">BFS</span><span class="tag">Three.js</span><span class="tag">D3.js</span></div>
+        </div>
+        <div class="proj-card">
+          <p class="proj-name">scryfall.linush.org</p>
+          <p class="proj-type">Local search engine + draft simulator</p>
+          <p class="proj-desc">Custom recursive descent parser tokenizing a DSL into an AST for nested boolean logic over an in-memory card dataset. Multi-threaded ETL + rarity-weighted draft simulator.</p>
+          <div class="tags" style="margin-top:6px"><span class="tag">Python</span><span class="tag">AST/DSL</span><span class="tag">FastAPI</span><span class="tag">Concurrency</span></div>
+        </div>
+        <div class="proj-card">
+          <p class="proj-name">blog.linush.org</p>
+          <p class="proj-type">High-performance markdown CMS</p>
+          <p class="proj-desc">Flat-file CMS with hybrid SSR + JSON API. Sub-millisecond response, perfect Lighthouse score. Custom ingestion pipeline with KaTeX math and zero-dependency templating.</p>
+          <div class="tags" style="margin-top:6px"><span class="tag">FastAPI</span><span class="tag">SSR</span><span class="tag">KaTeX</span></div>
+        </div>
+        <div class="proj-card">
+          <p class="proj-name">ping.linush.org</p>
+          <p class="proj-type">Real-time network protocol analyzer</p>
+          <p class="proj-desc">Benchmarks HTTP vs WebSocket RTT and jitter under high concurrency. Live Chart.js statistical dashboard. Built to empirically measure and visualize protocol overhead.</p>
+          <div class="tags" style="margin-top:6px"><span class="tag">FastAPI</span><span class="tag">WebSockets</span><span class="tag">Chart.js</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule-thin">
+
+  <!-- INFRASTRUCTURE -->
+  <div class="section">
+    <p class="section-label">Infrastructure</p>
+    <div class="section-body">
+      <p style="font-size:8.5pt;color:#666660;margin-bottom:7px">Production-grade homelab as a learning environment for systems programming, ML inference, and virtualization.</p>
+      <div class="infra-wrap">
+        <span class="tag tag-accent">Dual Xeon E5-2670 v2 · Tesla P40 24 GB</span>
+        <span class="tag">KVM/VFIO GPU passthrough</span>
+        <span class="tag">llama.cpp CUDA inference</span>
+        <span class="tag">ComfyUI (FLUX.1)</span>
+        <span class="tag">Jellyfin · Immich</span>
+        <span class="tag">Qdrant vector DB</span>
+        <span class="tag">GitLab CI/CD</span>
+        <span class="tag">ZFS · SMB NAS</span>
+        <span class="tag">Nginx · frp tunnelling</span>
+        <span class="tag">Hetzner VPS</span>
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule-thin">
+
+  <!-- SKILLS -->
+  <div class="section">
+    <p class="section-label">Skills</p>
+    <div class="section-body">
+      <div class="skills-grid">
+        <div>
+          <p class="skill-group-title">Backend &amp; APIs</p>
+          <p class="skill-items">Python (expert) · FastAPI · uvicorn<br>Async I/O · WebSockets · REST<br>PostgreSQL · SQL · vector DBs</p>
+        </div>
+        <div>
+          <p class="skill-group-title">ML &amp; data</p>
+          <p class="skill-items">PyTorch · llama.cpp · TensorFlow<br>CUDA inference (Tesla P40, SM 6.1)<br>Pandas · NumPy · Scikit-learn</p>
+        </div>
+        <div>
+          <p class="skill-group-title">Infrastructure &amp; systems</p>
+          <p class="skill-items">Linux (Arch, Ubuntu) · KVM/VFIO<br>Docker · Nginx · GitLab CI/CD<br>ZFS · VM orchestration</p>
+        </div>
+        <div>
+          <p class="skill-group-title">Other</p>
+          <p class="skill-items">JavaScript · D3.js · HTML/CSS<br>RTL-SDR · AIS · DAB+<br>German (native) · English (C1+)</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

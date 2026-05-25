@@ -3,15 +3,15 @@
 site url: https://linush.org
 github: https://github.com/MixoMax
 
-19 years old, born May 2006 in Hamburg, Germany.
+20 years old, born May 2006 in Hamburg, Germany.
 
 Timeline:
 
 Education:
 - 2012 - 2022: Primary school (Grundschule Forßmanstraße) and Gymnasium (Wilhelm-Gymnasium Hamburg)
 - 2021 - 2022: Spent 7 Months at sea as part of "High seas High school" (HSHS) program on the Tallship Guulden Leeuw, where I took on Navigational and Seamanship duties
-- 2022 - 2024: Abiutur at Wilhelm-Gymnasium Hamburg. Gradued with 1.9, Leistungskurse: Math, English, Physics, Geography
-- WS 2024 - present: Studying Computer Science at University of Rostock (currently in my 3rd semester)
+- 2022 - 2024: Abiutur at Wilhelm-Gymnasium Hamburg. Graduated with 1.9, Leistungskurse: Math, English, Physics, Geography
+- WS 2024 - present: Studying Computer Science at University of Rostock (currently in my 4th semester)
 
 Work Experience:
 - 2022 - 2023: 9 Months "minijob" at ITVT Süd GmbH, as a python backend developerand data analyst:
@@ -26,7 +26,7 @@ Work Experience:
 
 
 - Selfhosting enthusiast: I run a variety of selfhosted servers at home and on VPSs, including:
-    - Obelix (main): Dual Xeon E5-2670v2, 128GB RAM, 1 TB SSD, 9 TB HDD, Tesla P40 GPU running:
+    - Obelix/J3 (main): Dual Xeon E5-2670v2, 128GB RAM, 1 TB SSD, 9 TB HDD, Tesla P40 GPU running:
         -  Pterodactyl for game servers (multiple Minecraft servers)
         -  Jupyter notebooks for data science and machine learning experiments
         -  SMB share as a local NAS
@@ -37,7 +37,7 @@ Work Experience:
         -  Self hosting my own websites and web apps (including this one)
     - J2: i7 7700hq, 16GB RAM, 512GB SSD, GTX 1050TI Currently offline, used to run minecraft servers, before Obelix was set up
     - J4: i7 7700, 16GB RAM, 256GB SSD: Currently offline, will be used to host some minecraft server, as it has a higher single core performance than Obelix
-    - VPS (Hetzner CX22): 2vCPU, 4GB RAM, 80GB SSD, running:
+    - VPS (Hetzner CX22, "J1"): 2vCPU, 4GB RAM, 80GB SSD, running:
         - Nginx reverse proxy
         - Port forwarding to my home servers using frp
 
